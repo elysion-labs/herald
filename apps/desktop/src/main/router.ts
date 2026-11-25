@@ -6,6 +6,7 @@ import { os } from '@orpc/server';
 import { z } from 'zod';
 
 import { agentSettings } from '../shared/agent-settings.ts';
+import { assistantSettings } from '../shared/assistant-settings.ts';
 import { attachment, maxAttachments } from '../shared/attachments.ts';
 import {
   chatModelChoice,
@@ -15,6 +16,7 @@ import {
 } from '../shared/model-settings.ts';
 import { platforms } from '../shared/platforms.ts';
 import type { createWorkspaceBrowser } from './browser.ts';
+import { createLiveAssistant } from './live-assistant.ts';
 import { getPlatformAccount } from './platform-accounts.ts';
 import type { openWorkspace } from './workspace.ts';
 
@@ -42,6 +44,7 @@ export function createRouter(
   browser: ReturnType<typeof createWorkspaceBrowser>,
 ) {
   const browserTools = createBrowserAgentTools({ webContents: browser.webContents });
+  const assistant = createLiveAssistant(workspace, browserTools);
 
   return {
     platforms: {
@@ -80,6 +83,14 @@ export function createRouter(
       remove: os
         .input(memoryRecord)
         .handler(({ input }) => workspace.memory.remove(input.scope, input.id)),
+    },
+    assistant: {
+      settings: os.handler(() => workspace.settings.assistant()),
+      saveSettings: os
+        .input(assistantSettings.partial())
+        .handler(({ input }) => workspace.settings.saveAssistant(input)),
+      focus: os.input(z.uuid()).handler(({ input }) => assistant.focus(input)),
+      watch: os.handler(({ signal }) => assistant.watch(signal)),
     },
     settings: {
       agent: os.handler(() => workspace.settings.agentState()),

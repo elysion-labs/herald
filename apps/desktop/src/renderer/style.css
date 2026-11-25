@@ -819,6 +819,9 @@ svg.lucide-chevron-down {
 .chat-message-content > [data-slot='message-scroller-item'] {
   animation: fade-up 300ms var(--ease-out) both;
 }
+.reminder-item {
+  animation: fade-up 260ms var(--ease-out) both;
+}
 .skill-tag {
   animation: pop-in 200ms var(--ease-spring) both;
 }

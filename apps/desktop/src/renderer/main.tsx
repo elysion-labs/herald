@@ -41,7 +41,15 @@ import {
   Terminal,
   X,
 } from 'lucide-react';
-import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react';
 import { createRoot } from 'react-dom/client';
 import { useDefaultLayout, usePanelRef } from 'react-resizable-panels';
 
@@ -99,6 +107,8 @@ import { ModelSettings } from './model-settings.tsx';
 import { PlatformIcon } from './platform-icon.tsx';
 import { PlatformLoginDialog } from './platform-login-dialog.tsx';
 import { platformAccountKey, PlatformSettings } from './platform-settings.tsx';
+import { ReminderItem, useLiveReminder } from './reminders.tsx';
+import type { LiveReminder } from './reminders.tsx';
 import { rpc } from './rpc.ts';
 
 import './style.css';
@@ -841,16 +851,59 @@ function TraceKindIcon({ trace }: { trace: ChatTrace }) {
   return <Terminal />;
 }
 
+type HistoryMessage = Awaited<ReturnType<typeof rpc.conversations.history>>[number];
+
+function HistoryItem({ message }: { message: HistoryMessage }) {
+  if (message.role === 'reminder') {
+    return message.trigger ? <ReminderItem trigger={message.trigger} /> : null;
+  }
+
+  return <ChatTurn {...message} role={message.role} />;
+}
+
+function LiveReminderItem({ reminder }: { reminder: LiveReminder }) {
+  return (
+    <>
+      <ReminderItem trigger={reminder.trigger} live={reminder.turns.length === 0} />
+      {reminder.turns.map((turn, index) => (
+        <ChatTurn
+          key={index}
+          role="assistant"
+          {...turn}
+          streaming={index === reminder.turns.length - 1}
+        />
+      ))}
+    </>
+  );
+}
+
+function PendingTurn({ message }: { message?: ComposerMessage }) {
+  const attachments = message?.attachments ?? [];
+
+  return (
+    <ChatTurn
+      role="user"
+      text={message?.text ?? ''}
+      images={attachments.flatMap(file =>
+        file.mimeType.startsWith('image/') ? [`data:${file.mimeType};base64,${file.data}`] : [],
+      )}
+      files={attachments.flatMap(file => (file.mimeType.startsWith('image/') ? [] : [file.name]))}
+    />
+  );
+}
+
 function ChatTranscript({
   messages,
   error,
   pending,
   replies,
+  reminder,
 }: {
   messages?: Awaited<ReturnType<typeof rpc.conversations.history>>;
   error?: string;
   pending?: ComposerMessage;
   replies: LiveReplies;
+  reminder?: LiveReminder;
 }) {
   const isSending = pending !== undefined;
   const hasMessages = Boolean(messages?.length) || isSending;
@@ -871,23 +924,17 @@ function ChatTranscript({
                 messageId={message.id}
                 scrollAnchor={message.role === 'user'}
               >
-                <ChatTurn {...message} />
+                <HistoryItem message={message} />
               </MessageScrollerItem>
             ))}
+            {reminder && (
+              <MessageScrollerItem messageId="reminder">
+                <LiveReminderItem reminder={reminder} />
+              </MessageScrollerItem>
+            )}
             {isSending && (
               <MessageScrollerItem messageId="pending" scrollAnchor>
-                <ChatTurn
-                  role="user"
-                  text={pending?.text ?? ''}
-                  images={pending?.attachments.flatMap(file =>
-                    file.mimeType.startsWith('image/')
-                      ? [`data:${file.mimeType};base64,${file.data}`]
-                      : [],
-                  )}
-                  files={pending?.attachments.flatMap(file =>
-                    file.mimeType.startsWith('image/') ? [] : [file.name],
-                  )}
-                />
+                <PendingTurn message={pending} />
                 {replies.length === 0 && (
                   <Trace className="mx-auto max-w-3xl px-6 pb-6">
                     <TraceLine status="running">
@@ -923,6 +970,17 @@ function ChatSession({ id }: { id: string }) {
   const queryClient = useQueryClient();
   const historyQuery = { queryKey: ['history', id], queryFn: () => rpc.conversations.history(id) };
   const history = useQuery({ ...historyQuery, refetchOnWindowFocus: false });
+
+  const refresh = useCallback(
+    () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['history', id] }),
+        queryClient.invalidateQueries(conversationsQuery),
+      ]),
+    [id, queryClient],
+  );
+
+  const reminder = useLiveReminder(id, refresh);
 
   const send = useMutation({
     async mutationFn(message: ComposerMessage) {
@@ -974,6 +1032,7 @@ function ChatSession({ id }: { id: string }) {
           error={history.error?.message}
           pending={send.isPending ? send.variables : undefined}
           replies={replies}
+          reminder={reminder}
         />
         {history.data?.length === 0 && !send.isPending && (
           <div className="chat-empty">
