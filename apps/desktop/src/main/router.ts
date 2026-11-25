@@ -6,6 +6,7 @@ import { os } from '@orpc/server';
 import { z } from 'zod';
 
 import { agentSettings } from '../shared/agent-settings.ts';
+import { attachment, maxAttachments } from '../shared/attachments.ts';
 import {
   chatModelChoice,
   customProviderInput,
@@ -101,7 +102,15 @@ export function createRouter(
       create: os.input(platform).handler(({ input }) => workspace.create(input)),
       history: os.input(z.uuid()).handler(({ input }) => workspace.history(input)),
       send: os
-        .input(z.object({ id: z.uuid(), text: z.string().trim().min(1).max(16000) }))
+        .input(
+          z
+            .object({
+              id: z.uuid(),
+              text: z.string().trim().max(16000),
+              attachments: z.array(attachment).max(maxAttachments).default([]),
+            })
+            .refine(input => input.text || input.attachments.length, '消息不能为空'),
+        )
         .handler(async function* ({ input, signal }) {
           type Turns = Parameters<Parameters<typeof workspace.send>[3]>[0];
           type Update = { turns: Turns } | { done: true; error?: Error };
@@ -109,7 +118,7 @@ export function createRouter(
           const updates = on(emitter, 'reply', { signal });
           const publish = (update: Update) => emitter.emit('reply', update);
           void workspace
-            .send(input.id, input.text, browserTools, turns => publish({ turns }))
+            .send(input.id, input, browserTools, turns => publish({ turns }))
             .then(
               () => publish({ done: true }),
               (error: unknown) =>

@@ -31,7 +31,6 @@ import Tv from 'kubai-icons-react/icons/tv';
 import {
   ArrowLeft,
   ArrowRight,
-  ArrowUp,
   CircleCheck,
   CircleX,
   LoaderCircle,
@@ -49,7 +48,6 @@ import { Bubble, BubbleContent } from '@/components/ui/bubble';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
-  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,
@@ -63,12 +61,6 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from '@/components/ui/empty';
-import {
-  InputGroup,
-  InputGroupAddon,
-  InputGroupButton,
-  InputGroupTextarea,
-} from '@/components/ui/input-group';
 import { Message, MessageContent } from '@/components/ui/message';
 import {
   MessageScroller,
@@ -90,11 +82,14 @@ import {
   TraceTitle,
 } from '@/components/ui/trace';
 
+import { attachmentPattern } from '../shared/attachments.ts';
 import { platformLabels, platforms } from '../shared/platforms.ts';
 import { AgentCapabilitySettings, SystemPromptSettings } from './agent-settings.tsx';
 import { BrowserPane } from './browser-pane.tsx';
+import { AttachmentChip, ChatComposer } from './chat-composer.tsx';
+import type { ComposerMessage } from './chat-composer.tsx';
 import { ChatMarkdown } from './chat-markdown.tsx';
-import { chatModelKey, ChatModelControls } from './chat-model-controls.tsx';
+import { chatModelKey } from './chat-model-controls.tsx';
 import { kubaiMixed } from './kubai-colors.ts';
 import { roomSummary, statusLabels, StatusDot, useRoom } from './live-status.tsx';
 import { MemoryPage } from './memory-page.tsx';
@@ -714,8 +709,10 @@ function SkillTag({ skill, onRemove }: { skill: string; onRemove?: () => void })
   );
 }
 
-function UserText({ text }: { text: string }) {
-  const { skills: used, body } = parseSkillMessage(text);
+function UserText({ text, images, files }: { text: string; images: string[]; files: string[] }) {
+  const { skills: used, body: withFiles } = parseSkillMessage(text);
+  const attached = [...files, ...[...withFiles.matchAll(attachmentPattern)].map(match => match[1])];
+  const body = withFiles.replace(attachmentPattern, '').trim();
 
   return (
     <div className="flex flex-col items-end gap-1.5">
@@ -723,6 +720,25 @@ function UserText({ text }: { text: string }) {
         <div className="flex flex-wrap justify-end gap-1">
           {used.map(skill => (
             <SkillTag key={skill} skill={skill} />
+          ))}
+        </div>
+      )}
+      {images.length > 0 && (
+        <div className="flex flex-wrap justify-end gap-1.5">
+          {images.map((source, index) => (
+            <img
+              key={index}
+              src={source}
+              alt=""
+              className="border-border max-h-40 max-w-60 rounded-xl border object-cover"
+            />
+          ))}
+        </div>
+      )}
+      {attached.length > 0 && (
+        <div className="flex flex-wrap justify-end gap-1">
+          {attached.map((name, index) => (
+            <AttachmentChip key={`${name}-${index}`} name={name} />
           ))}
         </div>
       )}
@@ -740,10 +756,14 @@ function ChatTurn({
   text,
   traces = [],
   streaming = false,
+  images = [],
+  files = [],
 }: {
   role: 'user' | 'assistant';
   text: string;
   streaming?: boolean;
+  images?: string[];
+  files?: string[];
   traces?: Awaited<ReturnType<typeof rpc.conversations.history>>[number]['traces'];
 }) {
   const person = role === 'user';
@@ -770,7 +790,7 @@ function ChatTurn({
             ))}
           </Trace>
         )}
-        {text && person && <UserText text={text} />}
+        {person && <UserText text={text} images={images} files={files} />}
         {text && !person && <ChatMarkdown content={text} streaming={streaming} />}
       </MessageContent>
     </Message>
@@ -799,7 +819,7 @@ function ChatTranscript({
 }: {
   messages?: Awaited<ReturnType<typeof rpc.conversations.history>>;
   error?: string;
-  pending?: string;
+  pending?: ComposerMessage;
   replies: LiveReplies;
 }) {
   const isSending = pending !== undefined;
@@ -826,7 +846,18 @@ function ChatTranscript({
             ))}
             {isSending && (
               <MessageScrollerItem messageId="pending" scrollAnchor>
-                <ChatTurn role="user" text={pending ?? ''} />
+                <ChatTurn
+                  role="user"
+                  text={pending?.text ?? ''}
+                  images={pending?.attachments.flatMap(file =>
+                    file.mimeType.startsWith('image/')
+                      ? [`data:${file.mimeType};base64,${file.data}`]
+                      : [],
+                  )}
+                  files={pending?.attachments.flatMap(file =>
+                    file.mimeType.startsWith('image/') ? [] : [file.name],
+                  )}
+                />
                 {replies.length === 0 && (
                   <Trace className="mx-auto max-w-3xl px-6 pb-6">
                     <TraceLine status="running">
@@ -857,8 +888,6 @@ function ChatSession({ id }: { id: string }) {
   const input = useRef<HTMLTextAreaElement>(null);
   const chatBody = useRef<HTMLDivElement>(null);
   const composer = useRef<HTMLDivElement>(null);
-  const [text, setText] = useState('');
-  const [selectedSkills, setSelectedSkills] = useState<string[]>([]);
   const [replies, setReplies] = useState<LiveReplies>([]);
   const savingModel = useIsMutating({ mutationKey: chatModelKey(id) }) > 0;
   const queryClient = useQueryClient();
@@ -866,17 +895,15 @@ function ChatSession({ id }: { id: string }) {
   const history = useQuery({ ...historyQuery, refetchOnWindowFocus: false });
 
   const send = useMutation({
-    async mutationFn(message: string) {
+    async mutationFn(message: ComposerMessage) {
       setReplies([]);
-      const stream = await rpc.conversations.send({ id, text: message });
+      const stream = await rpc.conversations.send({ id, ...message });
 
       for await (const updates of stream) {
         setReplies(updates);
       }
     },
     onSuccess() {
-      setText('');
-      setSelectedSkills([]);
       input.current?.focus();
     },
     async onSettled() {
@@ -909,25 +936,6 @@ function ChatSession({ id }: { id: string }) {
     return () => observer.disconnect();
   }, []);
 
-  const composerLocked = send.isPending || savingModel;
-
-  const canSend = Boolean(text.trim() || selectedSkills.length) && !composerLocked;
-
-  function submit() {
-    if (canSend) {
-      const commands = selectedSkills.map(skill => `/skill:${skill}`);
-
-      send.mutate([...commands, text.trim()].filter(Boolean).join(' '));
-    }
-  }
-
-  function toggleSkill(skill: string) {
-    setSelectedSkills(current =>
-      current.includes(skill) ? current.filter(item => item !== skill) : [...current, skill],
-    );
-    input.current?.focus();
-  }
-
   return (
     <section className="chat surface-enter" aria-label="对话">
       <div ref={chatBody} className="chat-body">
@@ -940,103 +948,22 @@ function ChatSession({ id }: { id: string }) {
         {history.data?.length === 0 && !send.isPending && (
           <div className="chat-empty">
             <p className="text-foreground/80 text-sm">还没有消息</p>
-            <p className="text-muted-foreground text-xs">直接提问，或从「技能」开始</p>
+            <p className="text-muted-foreground text-xs">直接提问，也可以添加图片或文本文件</p>
           </div>
         )}
         <div ref={composer} className="chat-composer">
-          <form
-            className="pointer-events-auto mx-auto w-full max-w-3xl px-6 pb-5"
-            onSubmit={event => {
-              event.preventDefault();
-              submit();
-            }}
-          >
-            {send.isError && (
-              <p role="alert" className="error">
-                {send.error.message}
-              </p>
-            )}
-            <InputGroup className="composer-box bg-surface has-[[data-slot=input-group-control]:focus-visible]:border-transparent has-[[data-slot=input-group-control]:focus-visible]:ring-0">
-              {selectedSkills.length > 0 && (
-                <InputGroupAddon align="block-start" className="flex-wrap gap-1 pb-0">
-                  {selectedSkills.map(skill => (
-                    <SkillTag
-                      key={skill}
-                      skill={skill}
-                      onRemove={send.isPending ? undefined : () => toggleSkill(skill)}
-                    />
-                  ))}
-                </InputGroupAddon>
-              )}
-              <InputGroupTextarea
-                className="min-h-14"
-                ref={input}
-                aria-label="消息"
-                placeholder="给 Herald 发消息…"
-                value={text}
-                readOnly={send.isPending}
-                onChange={event => setText(event.target.value)}
-                onKeyDown={event => {
-                  if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
-                    event.preventDefault();
-                    submit();
-                  } else if (
-                    event.key === 'Backspace' &&
-                    !text &&
-                    selectedSkills.length &&
-                    !send.isPending
-                  ) {
-                    setSelectedSkills(current => current.slice(0, -1));
-                  }
-                }}
-              />
-              <InputGroupAddon align="block-end" className="flex-wrap gap-1 pt-1">
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <InputGroupButton
-                      type="button"
-                      size="sm"
-                      variant="ghost"
-                      aria-label="使用技能"
-                      disabled={send.isPending}
-                    >
-                      <SkillsIcon color={kubaiMixed.sparkles} trigger="parent" />
-                      技能
-                    </InputGroupButton>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent className="workspace-dropdown" side="top" align="start">
-                    <DropdownMenuGroup>
-                      {skills.map(({ id: skill, label, icon: Icon, color }) => (
-                        <DropdownMenuCheckboxItem
-                          key={skill}
-                          checked={selectedSkills.includes(skill)}
-                          onSelect={event => event.preventDefault()}
-                          onCheckedChange={() => toggleSkill(skill)}
-                        >
-                          <Icon color={color} />
-                          {label}
-                        </DropdownMenuCheckboxItem>
-                      ))}
-                    </DropdownMenuGroup>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-                <ChatModelControls id={id} disabled={send.isPending} />
-                <span className="text-muted-foreground/60 ml-auto px-1 text-[11px] select-none max-sm:hidden">
-                  Enter 发送 · Shift + Enter 换行
-                </span>
-                <InputGroupButton
-                  type="submit"
-                  variant="default"
-                  size="icon-sm"
-                  className="rounded-full"
-                  aria-label="发送"
-                  disabled={!canSend}
-                >
-                  <ArrowUp />
-                </InputGroupButton>
-              </InputGroupAddon>
-            </InputGroup>
-          </form>
+          {send.isError && (
+            <p role="alert" className="error pointer-events-auto mx-auto max-w-3xl px-6">
+              {send.error.message}
+            </p>
+          )}
+          <ChatComposer
+            id={id}
+            input={input}
+            busy={send.isPending}
+            locked={send.isPending || savingModel}
+            onSend={message => send.mutateAsync(message)}
+          />
         </div>
       </div>
     </section>

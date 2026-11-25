@@ -8,6 +8,13 @@ import { createMemoryAgentTools, openMemoryLibrary } from '@herald/memory-tool';
 import { ORPCError } from '@orpc/server';
 import { desc, eq } from 'drizzle-orm';
 
+import {
+  attachmentBlock,
+  isImageAttachment,
+  isTextAttachment,
+  maxTextAttachmentBytes,
+} from '../shared/attachments.ts';
+import type { Attachment } from '../shared/attachments.ts';
 import type { ChatModelChoice } from '../shared/model-settings.ts';
 import { openAppSettings } from './app-settings.ts';
 import { openDatabase, schema } from './db/index.ts';
@@ -15,6 +22,40 @@ import { openLiveRooms } from './live-rooms.ts';
 import { openModelSettings } from './model-settings.ts';
 
 type Conversation = typeof schema.conversations.$inferSelect;
+
+/** agent 未命名会话时的兜底标题：去掉技能命令后的首条消息，或第一个附件名。 */
+function fallbackTitle(text: string, attachments: readonly Attachment[]) {
+  const body = text.replace(/^(?:\/skill:\S+\s*)+/, '');
+
+  return (body || attachments[0]?.name || text).slice(0, 60);
+}
+
+/** 图片交给模型原生识别；文本类文件以原文拼进消息；其他类型明确拒绝。 */
+function prepareAttachments(text: string, attachments: readonly Attachment[]) {
+  const images: { type: 'image'; data: string; mimeType: string }[] = [];
+  const blocks: string[] = [];
+
+  for (const file of attachments) {
+    if (isImageAttachment(file.mimeType)) {
+      images.push({ type: 'image', data: file.data, mimeType: file.mimeType });
+      continue;
+    }
+
+    const buffer = Buffer.from(file.data, 'base64');
+
+    if (!isTextAttachment(file.name, file.mimeType)) {
+      throw new ORPCError('BAD_REQUEST', { message: `暂不支持这个文件类型：${file.name}` });
+    }
+
+    if (buffer.byteLength > maxTextAttachmentBytes) {
+      throw new ORPCError('BAD_REQUEST', { message: `文本文件超过 512 KB：${file.name}` });
+    }
+
+    blocks.push(attachmentBlock(file.name, buffer.toString('utf8')));
+  }
+
+  return { text: [text, ...blocks].filter(Boolean).join('\n\n'), images };
+}
 
 type ConversationTrace =
   | { kind: 'thinking'; text: string }
@@ -183,27 +224,33 @@ export function openWorkspace(directory: string) {
 
         const { role, content } = entry.message;
 
+        const parts =
+          typeof content === 'string' ? [{ type: 'text' as const, text: content }] : content;
+
         const turn =
           role === 'assistant'
             ? assistantContent(entry.message, toolResults)
             : {
-                text:
-                  typeof content === 'string'
-                    ? content
-                    : content.flatMap(part => (part.type === 'text' ? [part.text] : [])).join('\n'),
+                text: parts.flatMap(part => (part.type === 'text' ? [part.text] : [])).join('\n'),
                 traces: [],
+                images: parts.flatMap(part =>
+                  part.type === 'image' ? [`data:${part.mimeType};base64,${part.data}`] : [],
+                ),
               };
 
-        return turn.text || turn.traces.length ? [{ id: entry.id, role, ...turn }] : [];
+        return turn.text || turn.traces.length || ('images' in turn && turn.images.length)
+          ? [{ id: entry.id, role, ...turn }]
+          : [];
       });
     },
     async send(
       id: string,
-      text: string,
+      { text, attachments }: { text: string; attachments: readonly Attachment[] },
       tools: Parameters<typeof createLiveAgent>[0]['tools'],
       publish: (turns: LiveTurn[]) => void,
     ) {
       const conversation = getConversation(id);
+      const prepared = prepareAttachments(text, attachments);
 
       if (running.has(id)) {
         throw new ORPCError('CONFLICT', { message: '这个会话仍在运行' });
@@ -285,7 +332,9 @@ export function openWorkspace(directory: string) {
             );
           }
 
-          await session.prompt(await expandSkills(text));
+          await session.prompt(await expandSkills(prepared.text), {
+            images: prepared.images.length ? prepared.images : undefined,
+          });
 
           const reply = session.messages.at(-1);
 
@@ -297,7 +346,8 @@ export function openWorkspace(directory: string) {
 
           // agent 没有调用 set_session_title 时，用首条消息兜底，同样写入 jsonl。
           if (!session.sessionName) {
-            const title = (text.replace(/^(?:\/skill:\S+\s*)+/, '') || text).slice(0, 60);
+            const title = fallbackTitle(text, attachments);
+
             session.setSessionName(title);
             rename(title, id);
           }
