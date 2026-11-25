@@ -1,9 +1,17 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown, Settings2 } from 'lucide-react';
 import { useState } from 'react';
 
 import { Button } from '@/components/ui/button';
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -11,7 +19,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Input } from '@/components/ui/input';
 import { InputGroupButton } from '@/components/ui/input-group';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 
@@ -68,12 +75,13 @@ export function ChatModelControls({ id, disabled }: { id: string; disabled: bool
             <ChevronDown data-icon="inline-end" />
           </InputGroupButton>
         </PopoverTrigger>
-        <PopoverContent side="top" align="start" className="w-64">
+        <PopoverContent side="top" align="start" className="w-72 p-0">
           <ModelPicker
             providers={providers}
             current={current}
             disabled={save.isPending}
             onSelect={next => save.mutate(next)}
+            onManage={() => setOpen(false)}
           />
         </PopoverContent>
       </Popover>
@@ -110,87 +118,64 @@ function modelPickerState(catalog: ProviderList | undefined, choice: ChatModelCh
   };
 }
 
+/** shadcn Model Selector：按供应商分组、可搜索，右上角齿轮进入模型设置。 */
 function ModelPicker({
   providers,
   current,
   disabled,
   onSelect,
+  onManage,
 }: {
   providers: ProviderList;
   current?: ChatModelChoice;
   disabled: boolean;
   onSelect: (choice: ChatModelChoice) => void;
+  onManage: () => void;
 }) {
-  const [providerId, setProviderId] = useState(current?.provider);
-  const [filter, setFilter] = useState('');
-  const provider = providers.find(item => item.id === providerId);
-  const term = filter.trim().toLocaleLowerCase();
-
-  const models = provider?.models.filter(model =>
-    [model.name, model.id].some(value => value.toLocaleLowerCase().includes(term)),
-  );
-
   return (
-    <div className="grid gap-2">
-      {provider ? (
-        <>
-          <div className="flex items-center justify-between gap-2">
-            <span className="truncate text-sm font-medium">{provider.name || provider.id}</span>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              aria-label="切换供应商"
-              onClick={() => {
-                setProviderId(undefined);
-                setFilter('');
-              }}
-            >
-              供应商
-            </Button>
-          </div>
-          <Input
-            aria-label="筛选模型"
-            placeholder="筛选模型"
-            value={filter}
-            onChange={event => setFilter(event.target.value)}
-          />
-          <div className="grid max-h-64 gap-0.5 overflow-y-auto">
-            {models?.map(model => (
-              <Button
+    <Command className="rounded-xl p-0">
+      <div className="flex items-center gap-1 pr-1.5">
+        <div className="min-w-0 flex-1">
+          <CommandInput placeholder="搜索模型" />
+        </div>
+        <Button
+          asChild
+          variant="ghost"
+          size="icon-sm"
+          className="text-muted-foreground hover:text-foreground shrink-0"
+        >
+          <Link
+            to="/settings"
+            aria-label="管理模型供应商"
+            title="管理模型供应商"
+            onClick={onManage}
+          >
+            <Settings2 />
+          </Link>
+        </Button>
+      </div>
+      <CommandList className="max-h-80">
+        <CommandEmpty>
+          {providers.length ? '没有匹配的模型' : '还没有可用的模型供应商'}
+        </CommandEmpty>
+        {providers.map(provider => (
+          <CommandGroup key={provider.id} heading={provider.name || provider.id}>
+            {provider.models.map(model => (
+              <CommandItem
                 key={model.id}
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="justify-start"
+                value={`${provider.id}/${model.id}`}
+                keywords={[model.name, model.id, provider.name, provider.id]}
                 disabled={disabled}
-                onClick={() => onSelect({ provider: provider.id, model: model.id })}
+                data-checked={current?.provider === provider.id && current.model === model.id}
+                onSelect={() => onSelect({ provider: provider.id, model: model.id })}
               >
                 <span className="truncate">{model.name}</span>
-              </Button>
+              </CommandItem>
             ))}
-          </div>
-        </>
-      ) : (
-        <div className="grid max-h-64 gap-0.5 overflow-y-auto">
-          {providers.map(item => (
-            <Button
-              key={item.id}
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="justify-start"
-              onClick={() => setProviderId(item.id)}
-            >
-              <span className="truncate">{item.name || item.id}</span>
-            </Button>
-          ))}
-        </div>
-      )}
-      <Button asChild variant="outline" size="sm">
-        <Link to="/settings">管理模型供应商</Link>
-      </Button>
-    </div>
+          </CommandGroup>
+        ))}
+      </CommandList>
+    </Command>
   );
 }
 
