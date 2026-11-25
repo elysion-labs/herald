@@ -79,6 +79,7 @@ import {
   MessageScrollerViewport,
 } from '@/components/ui/message-scroller';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Trace,
   TraceCollapsible,
@@ -90,6 +91,7 @@ import {
 } from '@/components/ui/trace';
 
 import { platformLabels, platforms } from '../shared/platforms.ts';
+import { AgentCapabilitySettings, SystemPromptSettings } from './agent-settings.tsx';
 import { BrowserPane } from './browser-pane.tsx';
 import { ChatMarkdown } from './chat-markdown.tsx';
 import { chatModelKey, ChatModelControls } from './chat-model-controls.tsx';
@@ -1046,10 +1048,23 @@ function SettingsPage() {
 
   return (
     <main className="page surface-enter">
-      <div className="settings-stack mx-auto grid max-w-3xl gap-6">
-        <PlatformSettings openLogin={openLogin} />
-        <ModelSettings />
-      </div>
+      <Tabs defaultValue="general" className="mx-auto max-w-3xl gap-5">
+        <TabsList>
+          <TabsTrigger value="general">直播与模型</TabsTrigger>
+          <TabsTrigger value="prompt">系统提示词</TabsTrigger>
+          <TabsTrigger value="agent">Agent 能力</TabsTrigger>
+        </TabsList>
+        <TabsContent value="general" className="settings-stack grid gap-6">
+          <PlatformSettings openLogin={openLogin} />
+          <ModelSettings />
+        </TabsContent>
+        <TabsContent value="prompt" className="settings-stack grid gap-6">
+          <SystemPromptSettings />
+        </TabsContent>
+        <TabsContent value="agent" className="settings-stack grid gap-6">
+          <AgentCapabilitySettings />
+        </TabsContent>
+      </Tabs>
     </main>
   );
 }
