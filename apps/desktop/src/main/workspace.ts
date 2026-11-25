@@ -102,6 +102,7 @@ function subscribeToReplies(session: AgentSession, publish: (turns: LiveTurn[]) 
 
 export function openWorkspace(directory: string) {
   mkdirSync(directory, { recursive: true });
+  mkdirSync(join(directory, 'agent'), { recursive: true });
   const database = new DatabaseSync(join(directory, 'workspace.sqlite'));
   database.exec(`
     CREATE TABLE IF NOT EXISTS conversations (

@@ -2,11 +2,12 @@ import { randomUUID } from 'node:crypto';
 import { EventEmitter, on } from 'node:events';
 import { isIP } from 'node:net';
 
-import type { BrowserContents } from '@herald/browser-tool';
+import type { BrowserContents, BrowserInteraction } from '@herald/browser-tool';
 import { nativeImage, session, WebContentsView } from 'electron';
 import type { BrowserWindow, Rectangle, WebContents } from 'electron';
 
 import { webPartition } from '../shared/platforms.ts';
+import { showBrowserPointer } from './browser-pointer.ts';
 
 function webUrl(input: string) {
   const url = URL.parse(input);
@@ -45,12 +46,18 @@ function isWebUrl(input: string) {
   }
 }
 
-async function captureScreenshot(contents: WebContents) {
+function connectDebugger(contents: WebContents) {
   const devtools = contents.debugger;
 
   if (!devtools.isAttached()) {
     devtools.attach();
   }
+
+  return devtools;
+}
+
+async function captureScreenshot(contents: WebContents) {
+  const devtools = connectDebugger(contents);
 
   const reply: { data: string } = await devtools.sendCommand('Page.captureScreenshot', {
     format: 'png',
@@ -230,6 +237,11 @@ export function createWorkspaceBrowser(window: BrowserWindow) {
     };
 
     contents.on('did-start-loading', pageChanged);
+    contents.on('dom-ready', () => {
+      if (isWebUrl(contents.getURL())) {
+        void showBrowserPointer(contents).catch(() => undefined);
+      }
+    });
     contents.on('did-stop-loading', pageChanged);
     contents.on('did-navigate', () => {
       favicons.delete(id);
@@ -265,6 +277,57 @@ export function createWorkspaceBrowser(window: BrowserWindow) {
     const url = webUrl(input);
     const view = lookup(id) ?? createTab().view;
     await view.webContents.loadURL(url.href);
+  }
+
+  function interactionTarget(tabId?: string) {
+    const id = tabId ?? activeId;
+    const view = id ? lookup(id) : undefined;
+
+    if (!id || !view || !isWebUrl(view.webContents.getURL())) {
+      throw new Error('请选择已经打开的网页。');
+    }
+
+    select(id);
+
+    return { id, view, contents: view.webContents };
+  }
+
+  async function interact(input: BrowserInteraction, signal?: AbortSignal) {
+    signal?.throwIfAborted();
+    const { id, view, contents } = interactionTarget(input.tabId);
+    const { width, height } = view.getBounds();
+
+    if (width < 1 || height < 1) {
+      throw new Error('网页预览尚未取得尺寸，请先打开主页中的预览。');
+    }
+
+    const url = contents.getURL();
+    const devtools = connectDebugger(contents);
+
+    const metrics: { cssVisualViewport: { clientWidth: number; clientHeight: number } } =
+      await devtools.sendCommand('Page.getLayoutMetrics');
+
+    const viewport = metrics.cssVisualViewport;
+
+    const point = {
+      x: input.x * Math.max(0, viewport.clientWidth - 1),
+      y: input.y * Math.max(0, viewport.clientHeight - 1),
+    };
+
+    if (input.action === 'click') {
+      await showBrowserPointer(contents, point).catch(() => undefined);
+    }
+
+    const currentBounds = view.getBounds();
+    const isCurrentPage = !contents.isDestroyed() && contents.getURL() === url;
+    const hasSameSize = currentBounds.width === width && currentBounds.height === height;
+
+    if (activeId !== id || !isCurrentPage || !hasSameSize) {
+      throw new Error('网页或预览大小已变化，请重新截图后再操作。');
+    }
+
+    signal?.throwIfAborted();
+    await dispatchBrowserAction(devtools, input, point);
   }
 
   const webContents: BrowserContents = {
@@ -316,6 +379,7 @@ export function createWorkspaceBrowser(window: BrowserWindow) {
         }
       }
     },
+    interact,
     close,
   };
 
@@ -369,4 +433,33 @@ export function createWorkspaceBrowser(window: BrowserWindow) {
       lookup()?.webContents.reload();
     },
   };
+}
+
+async function dispatchBrowserAction(
+  devtools: WebContents['debugger'],
+  input: BrowserInteraction,
+  point: { x: number; y: number },
+) {
+  if (input.action === 'scroll') {
+    await devtools.sendCommand('Input.dispatchMouseEvent', {
+      type: 'mouseWheel',
+      ...point,
+      deltaX: input.deltaX,
+      deltaY: input.deltaY,
+    });
+
+    return;
+  }
+
+  const click = { ...point, button: 'left', clickCount: 1 };
+  await devtools.sendCommand('Input.dispatchMouseEvent', {
+    type: 'mousePressed',
+    ...click,
+    buttons: 1,
+  });
+  await devtools.sendCommand('Input.dispatchMouseEvent', {
+    type: 'mouseReleased',
+    ...click,
+    buttons: 0,
+  });
 }

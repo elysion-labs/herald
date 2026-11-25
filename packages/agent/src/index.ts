@@ -133,7 +133,7 @@ export async function createLiveAgent({
   const extensionRuntime = createExtensionRuntime();
 
   const cwd = sessionManager.getCwd();
-  const agentDir = join(cwd, 'pi');
+  const agentDir = join(cwd, 'agent');
   const liveSkills = loadLiveSkills(cwd, agentDir, enabledSkills);
 
   const resourceLoader: ResourceLoader = {
