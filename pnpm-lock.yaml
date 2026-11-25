@@ -376,11 +376,11 @@ importers:
   packages/live:
     dependencies:
       '@elysionjs/blive-ws':
-        specifier: link:../../../blive-ws
-        version: link:../../../blive-ws
+        specifier: link:../../vendor/blive-ws
+        version: link:../../vendor/blive-ws
       '@elysionjs/dylive-ws':
-        specifier: link:../../../dylive-ws
-        version: link:../../../dylive-ws
+        specifier: link:../../vendor/dylive-ws
+        version: link:../../vendor/dylive-ws
       cookie:
         specifier: 'catalog:'
         version: 2.0.2

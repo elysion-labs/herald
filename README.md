@@ -4,12 +4,15 @@ Herald 是一个 Electron 直播助手。工作台包含平台会话、Pi 聊天
 
 ## 本地开发
 
-将 `blive-ws` 和 `dylive-ws` 放在 Herald 的同级目录。这两个包目前通过 pnpm 本地链接使用。如果对应项目没有 `dist`，在各自目录安装依赖并执行 `vp run build`。
+首次开发需要 Git、Node.js 24+ 和 Vite+。Setup 会将 `blive-ws` 和 `dylive-ws` 的固定版本克隆到 `vendor/`，按各自的锁文件安装并构建。Herald 通过 pnpm 本地链接使用它们。已有克隆可以重复运行 setup。
 
 ```sh
+vpx ./scripts/setup-vendor.ts
 vp install
 vp run dev
 ```
+
+首次安装后也可以用 `vp run setup` 重新构建这两个依赖。更新上游版本时修改 `scripts/setup-vendor.ts` 中的提交号，再运行 setup。
 
 运行 `vp run ready` 检查格式、类型、测试和桌面构建。运行 `vp run build` 单独构建桌面应用。
 
