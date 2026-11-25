@@ -1,23 +1,19 @@
 import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 
 import { createLiveAgent, createSessionStore } from '@herald/agent';
 import type { LivePlatform } from '@herald/live';
 import { createMemoryAgentTools, openMemoryLibrary } from '@herald/memory-tool';
 import { ORPCError } from '@orpc/server';
+import { desc, eq } from 'drizzle-orm';
 
 import type { ChatModelChoice } from '../shared/model-settings.ts';
+import { openDatabase, schema } from './db/index.ts';
 import { openLiveRooms } from './live-rooms.ts';
 import { openModelSettings } from './model-settings.ts';
 
-interface Conversation {
-  id: string;
-  platform: LivePlatform;
-  title: string;
-  createdAt: number;
-}
+type Conversation = typeof schema.conversations.$inferSelect;
 
 type ConversationTrace =
   | { kind: 'thinking'; text: string }
@@ -103,27 +99,18 @@ function subscribeToReplies(session: AgentSession, publish: (turns: LiveTurn[]) 
 export function openWorkspace(directory: string) {
   mkdirSync(directory, { recursive: true });
   mkdirSync(join(directory, 'agent'), { recursive: true });
-  const database = new DatabaseSync(join(directory, 'workspace.sqlite'));
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS conversations (
-      id TEXT PRIMARY KEY, platform TEXT NOT NULL CHECK (platform IN ('bilibili', 'douyin')),
-      title TEXT NOT NULL, createdAt INTEGER NOT NULL
-    )
-  `);
-  const insert = database.prepare('INSERT INTO conversations VALUES (?, ?, ?, ?)');
+  const db = openDatabase(directory);
+  const { conversations } = schema;
 
-  const selectAll = database.prepare(
-    'SELECT * FROM conversations ORDER BY createdAt DESC, rowid DESC',
-  );
+  const rename = (title: string, id: string) =>
+    db.update(conversations).set({ title }).where(eq(conversations.id, id)).run();
 
-  const select = database.prepare('SELECT * FROM conversations WHERE id = ?');
-  const rename = database.prepare('UPDATE conversations SET title = ? WHERE id = ?');
   const running = new Set<string>();
-  const models = openModelSettings(database, directory);
+  const models = openModelSettings(db, directory);
   const memory = openMemoryLibrary(join(directory, 'memory'));
 
   function getConversation(id: string) {
-    const row = select.get(id) as Conversation | undefined;
+    const row = db.select().from(conversations).where(eq(conversations.id, id)).get();
 
     if (!row) {
       throw new ORPCError('NOT_FOUND', { message: '找不到会话' });
@@ -132,24 +119,30 @@ export function openWorkspace(directory: string) {
     return row;
   }
 
-  const rooms = openLiveRooms(database);
+  const rooms = openLiveRooms(db);
 
   return {
     models,
     memory,
     rooms,
     create(platform: LivePlatform) {
-      const conversation = { id: randomUUID(), platform, title: '新会话', createdAt: Date.now() };
-      insert.run(
-        conversation.id,
-        conversation.platform,
-        conversation.title,
-        conversation.createdAt,
-      );
+      const conversation: Conversation = {
+        id: randomUUID(),
+        platform,
+        title: '新会话',
+        createdAt: Date.now(),
+      };
+
+      db.insert(conversations).values(conversation).run();
 
       return conversation;
     },
-    list: () => selectAll.all() as unknown as Conversation[],
+    list: () =>
+      db
+        .select()
+        .from(conversations)
+        .orderBy(desc(conversations.createdAt), desc(conversations.id))
+        .all(),
     setModelChoice(id: string, choice: ChatModelChoice) {
       getConversation(id);
 
@@ -289,7 +282,7 @@ export function openWorkspace(directory: string) {
           }
 
           if (conversation.title === '新会话') {
-            rename.run((text.replace(/^(?:\/skill:\S+\s*)+/, '') || text).slice(0, 60), id);
+            rename((text.replace(/^(?:\/skill:\S+\s*)+/, '') || text).slice(0, 60), id);
           }
         } finally {
           unsubscribe();

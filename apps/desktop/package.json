@@ -6,6 +6,7 @@
   "main": "./out/main/index.js",
   "scripts": {
     "build": "vld build",
+    "db:generate": "drizzle-kit generate",
     "dev": "vld dev",
     "prepare": "install-electron",
     "preview": "vld preview"
@@ -23,6 +24,7 @@
     "class-variance-authority": "catalog:",
     "cmdk": "catalog:",
     "cn": "catalog:",
+    "drizzle-orm": "catalog:",
     "kubai-icons-react": "0.15.0",
     "lucide-react": "^0.577.0",
     "markstream-react": "catalog:",
@@ -41,6 +43,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^6",
+    "drizzle-kit": "catalog:",
     "electron": "45.4.1",
     "shadcn": "4.23.0",
     "tailwindcss": "^4",

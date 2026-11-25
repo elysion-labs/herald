@@ -1,12 +1,14 @@
 import { randomUUID } from 'node:crypto';
-import type { DatabaseSync } from 'node:sqlite';
 
 import { createLiveChat } from '@herald/live';
 import type { LiveChatMessage, LivePlatform } from '@herald/live';
 import { ORPCError } from '@orpc/server';
+import { eq } from 'drizzle-orm';
 
 import { liveRoomUrl, parseLiveRoom } from '../shared/live-room.ts';
 import { platforms } from '../shared/platforms.ts';
+import { schema } from './db/index.ts';
+import type { Database } from './db/index.ts';
 import { readLiveCookies } from './platform-accounts.ts';
 
 interface RoomConnection {
@@ -18,27 +20,6 @@ interface RoomConnection {
 
 const recentLimit = 30;
 const recentWindow = 2 * 60 * 1000;
-
-function initializeRoomBindings(database: DatabaseSync) {
-  const table = database.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?");
-  const migrate = !table.get('platform_live_rooms') && table.get('live_rooms');
-
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS platform_live_rooms (
-      platform TEXT PRIMARY KEY CHECK (platform IN ('bilibili', 'douyin')),
-      room_id TEXT NOT NULL
-    )
-  `);
-
-  if (migrate) {
-    database.exec(`
-      INSERT OR IGNORE INTO platform_live_rooms (platform, room_id)
-      SELECT conversations.platform, live_rooms.room_id
-      FROM live_rooms JOIN conversations ON conversations.id = live_rooms.conversation_id
-      ORDER BY conversations.createdAt DESC, conversations.rowid DESC
-    `);
-  }
-}
 
 function explainFailure(error: unknown) {
   if (!(error instanceof Error)) {
@@ -64,11 +45,22 @@ function explainFailure(error: unknown) {
   return '暂时无法连接弹幕服务，请检查网络和直播状态。';
 }
 
-export function openLiveRooms(database: DatabaseSync) {
-  initializeRoomBindings(database);
-  const read = database.prepare('SELECT room_id FROM platform_live_rooms WHERE platform = ?');
-  const save = database.prepare('INSERT OR REPLACE INTO platform_live_rooms VALUES (?, ?)');
-  const remove = database.prepare('DELETE FROM platform_live_rooms WHERE platform = ?');
+export function openLiveRooms(db: Database) {
+  const { platformLiveRooms: table } = schema;
+
+  const readRoom = (platform: LivePlatform) =>
+    db.select().from(table).where(eq(table.platform, platform)).get()?.roomId;
+
+  const saveRoom = (platform: LivePlatform, roomId: string) =>
+    db
+      .insert(table)
+      .values({ platform, roomId })
+      .onConflictDoUpdate({ target: table.platform, set: { roomId } })
+      .run();
+
+  const removeRoom = (platform: LivePlatform) =>
+    db.delete(table).where(eq(table.platform, platform)).run();
+
   const connections = new Map<LivePlatform, RoomConnection>();
 
   function stop(platform: LivePlatform) {
@@ -78,7 +70,7 @@ export function openLiveRooms(database: DatabaseSync) {
   }
 
   function status(platform: LivePlatform) {
-    const roomId = read.get(platform)?.room_id as string | undefined;
+    const roomId = readRoom(platform);
 
     if (!roomId) {
       return null;
@@ -98,7 +90,7 @@ export function openLiveRooms(database: DatabaseSync) {
 
   function connect(platform: LivePlatform) {
     stop(platform);
-    const roomId = read.get(platform)?.room_id as string | undefined;
+    const roomId = readRoom(platform);
 
     if (!roomId) {
       return;
@@ -148,7 +140,7 @@ export function openLiveRooms(database: DatabaseSync) {
     },
     setBinding(platform: LivePlatform, input: string | null) {
       if (input === null) {
-        remove.run(platform);
+        removeRoom(platform);
         stop(platform);
 
         return null;
@@ -161,7 +153,7 @@ export function openLiveRooms(database: DatabaseSync) {
       }
 
       const previous = status(platform);
-      save.run(platform, roomId);
+      saveRoom(platform, roomId);
 
       if (previous?.roomId !== roomId || previous.state !== 'connected') {
         connect(platform);
