@@ -21,6 +21,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { modelApis } from '../shared/model-settings.ts';
 import type { CustomModel, CustomProvider } from '../shared/model-settings.ts';
 import { rpc } from './rpc.ts';
+import { SearchableSelect } from './searchable-select.tsx';
 
 export const modelCatalogQuery = { queryKey: ['model-catalog'], queryFn: () => rpc.models.state() };
 type Catalog = Awaited<ReturnType<typeof rpc.models.state>>;
@@ -39,18 +40,27 @@ export function ModelSettings() {
 
   return (
     <Card aria-labelledby="model-settings-heading">
-      <CardHeader>
-        <CardTitle id="model-settings-heading">模型供应商</CardTitle>
-      </CardHeader>
-      <CardContent>
-        {catalog.data ? (
-          <ProviderSettings state={catalog.data} />
-        ) : (
-          <p role={catalog.isError ? 'alert' : 'status'} className="text-muted-foreground text-sm">
-            {catalog.isError ? catalog.error.message : '正在加载模型目录…'}
-          </p>
-        )}
-      </CardContent>
+      <Tabs defaultValue="preset" className="gap-0">
+        <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3">
+          <CardTitle id="model-settings-heading">模型供应商</CardTitle>
+          <TabsList>
+            <TabsTrigger value="preset">内置模型供应商</TabsTrigger>
+            <TabsTrigger value="custom">自定义模型 API</TabsTrigger>
+          </TabsList>
+        </CardHeader>
+        <CardContent className="pt-4">
+          {catalog.data ? (
+            <ProviderSettings state={catalog.data} />
+          ) : (
+            <p
+              role={catalog.isError ? 'alert' : 'status'}
+              className="text-muted-foreground text-sm"
+            >
+              {catalog.isError ? catalog.error.message : '正在加载模型目录…'}
+            </p>
+          )}
+        </CardContent>
+      </Tabs>
     </Card>
   );
 }
@@ -60,11 +70,7 @@ function ProviderSettings({ state }: { state: Catalog }) {
   const selected = state.custom.find(item => item.id === editing);
 
   return (
-    <Tabs defaultValue="preset" className="gap-4">
-      <TabsList>
-        <TabsTrigger value="preset">第三方模型供应商</TabsTrigger>
-        <TabsTrigger value="custom">自定义模型 API</TabsTrigger>
-      </TabsList>
+    <>
       <TabsContent value="preset">
         <PresetKeys providers={state.providers.filter(item => !item.isCustom)} />
       </TabsContent>
@@ -97,7 +103,7 @@ function ProviderSettings({ state }: { state: Catalog }) {
         )}
         <CustomProviderForm key={editing} existing={selected} onCreated={setEditing} />
       </TabsContent>
-    </Tabs>
+    </>
   );
 }
 
@@ -130,27 +136,22 @@ function PresetKeys({ providers }: { providers: Catalog['providers'] }) {
       <FieldGroup className="gap-4">
         <Field>
           <FieldLabel htmlFor="model-provider">供应商</FieldLabel>
-          <Select
+          <SearchableSelect
+            id="model-provider"
             value={providerId}
-            onValueChange={id => {
+            searchPlaceholder="搜索供应商"
+            emptyText="没有匹配的供应商"
+            options={providers.map(item => ({
+              value: item.id,
+              label: item.name || item.id,
+              keywords: [item.id],
+            }))}
+            onChange={id => {
               setProviderId(id);
               setApiKey('');
               save.reset();
             }}
-          >
-            <SelectTrigger id="model-provider" className="w-full">
-              <SelectValue placeholder="选择 Pi 内置供应商" />
-            </SelectTrigger>
-            <SelectContent position="popper" align="start">
-              <SelectGroup>
-                {providers.map(item => (
-                  <SelectItem value={item.id} key={item.id}>
-                    {item.name || item.id}
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
+          />
         </Field>
         {provider && (
           <Field>
