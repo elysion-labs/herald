@@ -1,0 +1,12 @@
+{
+  "name": "@herald/memory-tool",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "1.6.0",
+    "@tobilu/qmd": "2.9.0",
+    "typebox": "1.3.27"
+  }
+}

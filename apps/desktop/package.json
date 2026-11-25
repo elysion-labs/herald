@@ -1,0 +1,49 @@
+{
+  "name": "desktop",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "build": "vld build",
+    "dev": "vld dev",
+    "prepare": "install-electron",
+    "preview": "vld preview"
+  },
+  "dependencies": {
+    "@herald/agent": "workspace:*",
+    "@herald/browser-tool": "workspace:*",
+    "@herald/live": "workspace:*",
+    "@herald/memory-tool": "workspace:*",
+    "@orpc/client": "1.16.5",
+    "@orpc/server": "1.16.5",
+    "@shadcn/react": "catalog:",
+    "@tanstack/react-query": "^5",
+    "@tanstack/react-router": "^1",
+    "class-variance-authority": "catalog:",
+    "cn": "catalog:",
+    "kubai-icons-react": "0.15.0",
+    "lucide-react": "^0.577.0",
+    "radix-ui": "^1",
+    "react": "^19",
+    "react-dom": "^19",
+    "react-resizable-panels": "catalog:",
+    "tw-animate-css": "catalog:",
+    "zod": "^4"
+  },
+  "devDependencies": {
+    "@byc/vp-config": "catalog:",
+    "@stylistic/eslint-plugin": "catalog:",
+    "@tailwindcss/vite": "^4",
+    "@types/node": "catalog:",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@vitejs/plugin-react": "^6",
+    "electron": "45.4.1",
+    "shadcn": "4.23.0",
+    "tailwindcss": "^4",
+    "veldorajs": "0.0.6",
+    "vite-plus": "catalog:"
+  },
+  "productName": "Herald"
+}

@@ -1,0 +1,27 @@
+{
+  "name": "herald",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vp run desktop#build",
+    "dev": "vp run desktop#dev",
+    "prepare": "vp config",
+    "ready": "vp check && vp test run --passWithNoTests && vp run desktop#build"
+  },
+  "devDependencies": {
+    "@byc/vp-config": "catalog:",
+    "@stylistic/eslint-plugin": "catalog:",
+    "vite-plus": "catalog:"
+  },
+  "devEngines": {
+    "packageManager": {
+      "name": "pnpm",
+      "version": "12.23.0",
+      "onFail": "download"
+    }
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  }
+}
