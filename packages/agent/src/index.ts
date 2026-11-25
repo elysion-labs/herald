@@ -4,6 +4,7 @@ import type { CreateAgentSessionOptions, ResourceLoader } from '@earendil-works/
 import {
   createAgentSession,
   createExtensionRuntime,
+  defineTool,
   SessionManager,
   SettingsManager,
 } from '@earendil-works/pi-coding-agent';
@@ -11,6 +12,7 @@ import { createHistoryAgentTools } from '@herald/history-tool';
 import type { HistoryMatch } from '@herald/history-tool';
 import type { LivePlatform } from '@herald/live';
 import { createSkillAgentTools, expandSkillCommands, loadLiveSkills } from '@herald/skill-tool';
+import { Type } from 'typebox';
 
 export function createSessionStore(dataDirectory: string, platform: LivePlatform) {
   if (platform !== 'bilibili' && platform !== 'douyin') {
@@ -107,6 +109,28 @@ interface LiveAgentOptions {
   thinking?: CreateAgentSessionOptions['thinkingLevel'];
   enabledSkills?: readonly string[];
   tools?: CreateAgentSessionOptions['customTools'];
+  /** 标题写入 session jsonl 之后的回调，用于同步会话列表索引。 */
+  onTitle?: (title: string) => void;
+}
+
+function createSessionTitleTool(sessionManager: SessionManager, onTitle?: (title: string) => void) {
+  return defineTool({
+    name: 'set_session_title',
+    label: '设置会话标题',
+    description:
+      '为当前会话设置简短的中文标题（不超过 30 字），概括这场直播会话的主题。话题明确或明显转变时调用，不要每轮都调用。',
+    parameters: Type.Object({ title: Type.String({ minLength: 1, maxLength: 60 }) }),
+    async execute(_callId, { title }) {
+      const name = title.trim().slice(0, 60);
+      sessionManager.appendSessionInfo(name);
+      onTitle?.(name);
+
+      return {
+        content: [{ type: 'text', text: `会话标题已设置为：${name}` }],
+        details: { title: name },
+      };
+    },
+  });
 }
 
 export { ModelRuntime } from '@earendil-works/pi-coding-agent';
@@ -122,6 +146,7 @@ export async function createLiveAgent({
   thinking,
   enabledSkills,
   tools = [],
+  onTitle,
 }: LiveAgentOptions) {
   const sessionManager =
     sessionId === undefined ? store.create(newSessionId) : store.open(sessionId);
@@ -152,6 +177,7 @@ export async function createLiveAgent({
   };
 
   const customTools = [
+    createSessionTitleTool(sessionManager, onTitle),
     ...createHistoryAgentTools(store),
     ...createSkillAgentTools(liveSkills),
     ...tools,

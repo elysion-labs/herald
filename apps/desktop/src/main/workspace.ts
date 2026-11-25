@@ -149,8 +149,16 @@ export function openWorkspace(directory: string) {
       return models.saveChoice(id, choice);
     },
     history(id: string) {
-      const { platform } = getConversation(id);
-      const entries = createSessionStore(directory, platform).open(id)?.getBranch() ?? [];
+      const { platform, title } = getConversation(id);
+      const session = createSessionStore(directory, platform).open(id);
+      const name = session?.getSessionName();
+
+      // 标题以 session jsonl 为准，列表索引不一致时以它恢复。
+      if (name && name !== title) {
+        rename(name, id);
+      }
+
+      const entries = session?.getBranch() ?? [];
 
       const toolResults = new Map(
         entries.flatMap(entry => {
@@ -248,6 +256,7 @@ export function openWorkspace(directory: string) {
           model,
           thinking,
           tools: [...(tools ?? []), ...memoryTools],
+          onTitle: title => rename(title, id),
           ...target,
         });
 
@@ -281,8 +290,11 @@ export function openWorkspace(directory: string) {
             });
           }
 
-          if (conversation.title === '新会话') {
-            rename((text.replace(/^(?:\/skill:\S+\s*)+/, '') || text).slice(0, 60), id);
+          // agent 没有调用 set_session_title 时，用首条消息兜底，同样写入 jsonl。
+          if (!session.sessionName) {
+            const title = (text.replace(/^(?:\/skill:\S+\s*)+/, '') || text).slice(0, 60);
+            session.setSessionName(title);
+            rename(title, id);
           }
         } finally {
           unsubscribe();
