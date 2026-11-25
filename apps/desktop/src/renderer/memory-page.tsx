@@ -1,9 +1,11 @@
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { NotebookText, Plus, Quote, Search, Trash2 } from 'lucide-react';
+import { keepPreviousData, useMutation, useQueries, useQueryClient } from '@tanstack/react-query';
+import Globe from 'kubai-icons-react/icons/globe';
+import { ChevronRight, Plus, Quote, Search, Trash2 } from 'lucide-react';
 import { useDeferredValue, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import {
   Dialog,
   DialogContent,
@@ -24,150 +26,212 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 
 import { platformLabels, platforms } from '../shared/platforms.ts';
 import { dialogOrigin } from './dialog-origin.ts';
+import { kubaiMixed } from './kubai-colors.ts';
 import { PlatformIcon } from './platform-icon.tsx';
 import { rpc } from './rpc.ts';
 
 const evidenceLabels = { manual: '手动录入', streamer: '主播提供', danmaku: '弹幕自述' };
 const scopes = ['shared', ...platforms] as const;
-const scopeLabels = { shared: '通用记忆', ...platformLabels };
-const tabLabels = { shared: '通用', ...platformLabels };
+const scopeLabels = { shared: '全局记忆', ...platformLabels };
+const groupLabels = { shared: '全局', ...platformLabels };
 type MemorySave = Parameters<typeof rpc.memory.save>[0];
 type MemoryRemove = Parameters<typeof rpc.memory.remove>[0];
 type MemoryRecord = Awaited<ReturnType<typeof rpc.memory.save>>;
 type MemoryScope = MemorySave['scope'];
 
 export function MemoryPage() {
-  const [scope, setScope] = useState<MemoryScope>('shared');
   const [searchText, setSearchText] = useState('');
   const search = useDeferredValue(searchText.trim());
-  const [selectedId, setSelectedId] = useState<string>();
+  const [selected, setSelected] = useState<{ scope: MemoryScope; id: string }>();
+  const [collapsed, setCollapsed] = useState<MemoryScope[]>([]);
 
-  const result = useQuery({
-    queryKey: ['memory', scope, search],
-    queryFn: async () =>
-      search
-        ? rpc.memory.search({ scope, query: search })
-        : { matches: await rpc.memory.list(scope) },
-    placeholderData: keepPreviousData,
+  const groups = useQueries({
+    queries: scopes.map(scope => ({
+      queryKey: ['memory', scope, search],
+      queryFn: async () =>
+        search
+          ? rpc.memory.search({ scope, query: search })
+          : { matches: await rpc.memory.list(scope) },
+      placeholderData: keepPreviousData,
+    })),
   });
 
-  const records = result.data?.matches ?? [];
-  const selected = records.find(item => item.id === selectedId);
+  const total = groups.reduce((sum, group) => sum + (group.data?.matches.length ?? 0), 0);
+
+  const record = selected
+    ? groups[scopes.indexOf(selected.scope)]?.data?.matches.find(item => item.id === selected.id)
+    : undefined;
 
   return (
     <main className="surface-enter flex h-full min-h-0 w-full">
       <aside className="border-border flex w-80 shrink-0 flex-col border-r" aria-label="记忆列表">
-        <div className="grid gap-2 px-3 pt-3 pb-2">
-          <Tabs
-            value={scope}
-            onValueChange={value => {
-              const next = scopes.find(item => item === value);
-
-              if (next) {
-                setScope(next);
-                setSelectedId(undefined);
-              }
-            }}
-          >
-            <TabsList className="w-full">
-              {scopes.map(item => (
-                <TabsTrigger value={item} key={item}>
-                  {tabLabels[item]}
-                </TabsTrigger>
-              ))}
-            </TabsList>
-          </Tabs>
-          <div className="flex items-center gap-1.5">
-            <InputGroup className="h-8 flex-1">
-              <InputGroupAddon>
-                <Search />
-              </InputGroupAddon>
-              <InputGroupInput
-                aria-label="搜索记忆"
-                placeholder="搜索内容、原文或 UID"
-                value={searchText}
-                maxLength={240}
-                onChange={event => setSearchText(event.target.value)}
-              />
-            </InputGroup>
-            <CaptureDialog
-              scope={scope}
-              onSaved={record => {
-                setScope(record.scope);
-                setSelectedId(record.id);
-                setSearchText('');
-              }}
+        <div className="flex items-center gap-1.5 px-3 pt-3 pb-2">
+          <InputGroup className="h-8 flex-1">
+            <InputGroupAddon>
+              <Search />
+            </InputGroupAddon>
+            <InputGroupInput
+              aria-label="搜索记忆"
+              placeholder="搜索内容、原文或 UID"
+              value={searchText}
+              maxLength={240}
+              onChange={event => setSearchText(event.target.value)}
             />
-          </div>
+          </InputGroup>
+          <CaptureDialog
+            scope={selected?.scope ?? 'shared'}
+            onSaved={saved => {
+              setCollapsed(current => current.filter(item => item !== saved.scope));
+              setSelected({ scope: saved.scope, id: saved.id });
+              setSearchText('');
+            }}
+          />
         </div>
-        <p
-          className="text-muted-foreground px-4 pt-1 pb-1.5 text-[11px] tabular-nums"
-          aria-live="polite"
-        >
-          {result.isSuccess && `${records.length} 条${search ? '匹配' : '记忆'}`}
-        </p>
-        <div className="memory-list grid min-h-0 flex-1 content-start gap-px overflow-y-auto px-2 pb-2">
-          {result.isPending && (
-            <p role="status" className="text-muted-foreground px-2 py-3 text-sm">
-              正在加载…
-            </p>
-          )}
-          {result.isError && (
-            <p role="alert" className="text-destructive px-2 py-3 text-sm">
-              {result.error.message}
-            </p>
-          )}
-          {result.isSuccess && !records.length && (
-            <p className="text-muted-foreground px-2 py-6 text-center text-sm">
-              {search ? '没有匹配的记忆' : '还没有记录'}
-            </p>
-          )}
-          {records.map(record => (
-            <button
-              type="button"
-              key={record.id}
-              data-selected={record.id === selectedId}
-              aria-pressed={record.id === selectedId}
-              className="memory-row hover:bg-secondary/60 data-[selected=true]:bg-secondary focus-visible:ring-ring flex min-w-0 items-start gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors outline-none focus-visible:ring-1"
-              onClick={() => setSelectedId(record.id)}
-            >
-              <ScopeAvatar scope={record.scope} />
-              <span className="grid min-w-0 flex-1 gap-0.5">
-                <span className="line-clamp-2 text-[13px] leading-snug">{record.fact}</span>
-                <span className="text-muted-foreground flex min-w-0 gap-1.5 text-[11px]">
-                  <span className="truncate">
-                    {record.viewerId
-                      ? `UID ${record.viewerId}`
-                      : evidenceLabels[record.evidence.type]}
-                  </span>
-                  <span className="ml-auto shrink-0 tabular-nums">
-                    {shortDate(record.createdAt)}
-                  </span>
-                </span>
-              </span>
-            </button>
+        <div className="memory-list grid min-h-0 flex-1 content-start gap-1 overflow-y-auto px-2 pb-2">
+          {scopes.map((scope, index) => (
+            <MemoryGroup
+              key={scope}
+              scope={scope}
+              group={groups[index]}
+              search={search}
+              open={!collapsed.includes(scope)}
+              selectedId={selected?.scope === scope ? selected.id : undefined}
+              onOpenChange={next =>
+                setCollapsed(current =>
+                  next ? current.filter(item => item !== scope) : [...current, scope],
+                )
+              }
+              onSelect={id => setSelected({ scope, id })}
+            />
           ))}
         </div>
       </aside>
       <section className="memory-list flex min-w-0 flex-1 flex-col" aria-label="记忆详情">
-        {selected ? (
-          <MemoryPreview
-            key={selected.id}
-            record={selected}
-            onRemoved={() => setSelectedId(undefined)}
-          />
+        {record ? (
+          <MemoryPreview key={record.id} record={record} onRemoved={() => setSelected(undefined)} />
         ) : (
           <p className="text-muted-foreground grid flex-1 place-items-center text-sm">
-            {records.length ? '选择左侧记忆查看详情' : '暂无记忆'}
+            {total ? '选择左侧记忆查看详情' : '暂无记忆'}
           </p>
         )}
       </section>
     </main>
+  );
+}
+
+interface MemoryGroupQuery {
+  data?: { matches: MemoryRecord[] };
+  error: Error | null;
+  isPending: boolean;
+  isError: boolean;
+  isSuccess: boolean;
+}
+
+function MemoryGroup({
+  scope,
+  group,
+  search,
+  open,
+  selectedId,
+  onOpenChange,
+  onSelect,
+}: {
+  scope: MemoryScope;
+  group?: MemoryGroupQuery;
+  search: string;
+  open: boolean;
+  selectedId?: string;
+  onOpenChange: (open: boolean) => void;
+  onSelect: (id: string) => void;
+}) {
+  const records = group?.data?.matches ?? [];
+
+  return (
+    <Collapsible open={open} onOpenChange={onOpenChange}>
+      <CollapsibleTrigger className="memory-group-trigger">
+        <ChevronRight className="memory-group-chevron" />
+        <ScopeIcon scope={scope} />
+        <span className="text-[13px] font-medium">{groupLabels[scope]}</span>
+        <span className="text-muted-foreground ml-auto text-[11px] tabular-nums">
+          {group?.isSuccess ? records.length : ''}
+        </span>
+      </CollapsibleTrigger>
+      <CollapsibleContent className="memory-group-content">
+        <div className="grid gap-px pt-0.5 pb-1">
+          <GroupStatus group={group} empty={!records.length} search={search} />
+          {records.map(item => (
+            <MemoryRow
+              key={item.id}
+              record={item}
+              selected={item.id === selectedId}
+              onSelect={() => onSelect(item.id)}
+            />
+          ))}
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
+function GroupStatus({
+  group,
+  empty,
+  search,
+}: {
+  group?: MemoryGroupQuery;
+  empty: boolean;
+  search: string;
+}) {
+  if (!group || group.isPending) {
+    return (
+      <p role="status" className="text-muted-foreground py-2 pl-9 text-xs">
+        正在加载…
+      </p>
+    );
+  }
+
+  if (group.isError) {
+    return (
+      <p role="alert" className="text-destructive py-2 pl-9 text-xs">
+        {group.error?.message}
+      </p>
+    );
+  }
+
+  return empty ? (
+    <p className="text-muted-foreground py-2 pl-9 text-xs">{search ? '没有匹配' : '暂无记录'}</p>
+  ) : null;
+}
+
+function MemoryRow({
+  record,
+  selected,
+  onSelect,
+}: {
+  record: MemoryRecord;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      data-selected={selected}
+      aria-pressed={selected}
+      className="memory-row hover:bg-secondary/60 data-[selected=true]:bg-secondary focus-visible:ring-ring grid min-w-0 gap-0.5 rounded-lg py-2 pr-2.5 pl-9 text-left transition-colors outline-none focus-visible:ring-1"
+      onClick={onSelect}
+    >
+      <span className="line-clamp-2 text-[13px] leading-snug">{record.fact}</span>
+      <span className="text-muted-foreground flex min-w-0 gap-1.5 text-[11px]">
+        <span className="truncate">
+          {record.viewerId ? `UID ${record.viewerId}` : evidenceLabels[record.evidence.type]}
+        </span>
+        <span className="ml-auto shrink-0 tabular-nums">{shortDate(record.createdAt)}</span>
+      </span>
+    </button>
   );
 }
 
@@ -179,15 +243,11 @@ function shortDate(timestamp: number) {
     : date.toLocaleDateString('zh-CN');
 }
 
-function ScopeAvatar({ scope }: { scope: MemoryScope }) {
-  return (
-    <span className="bg-secondary mt-0.5 grid size-7 shrink-0 place-items-center rounded-full">
-      {scope === 'shared' ? (
-        <NotebookText className="text-muted-foreground size-3.5" />
-      ) : (
-        <PlatformIcon platform={scope} size={14} />
-      )}
-    </span>
+function ScopeIcon({ scope }: { scope: MemoryScope }) {
+  return scope === 'shared' ? (
+    <Globe size={16} color={kubaiMixed.globe} className="shrink-0" />
+  ) : (
+    <PlatformIcon platform={scope} size={16} />
   );
 }
 
@@ -347,7 +407,7 @@ function MemoryPreview({ record, onRemoved }: { record: MemoryRecord; onRemoved:
   return (
     <>
       <div className="border-border flex h-11 shrink-0 items-center gap-2 border-b px-5">
-        <ScopeAvatar scope={record.scope} />
+        <ScopeIcon scope={record.scope} />
         <span className="text-sm">{scopeLabels[record.scope]}</span>
         <div className="ml-auto flex items-center gap-1">
           {confirmRemove && (
