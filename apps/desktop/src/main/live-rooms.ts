@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { EventEmitter, on } from 'node:events';
 
 import { createLiveChat } from '@herald/live';
 import type { LiveChatMessage, LivePlatform } from '@herald/live';
@@ -15,8 +16,10 @@ interface RoomConnection {
   client?: ReturnType<typeof createLiveChat>;
   error?: string;
   received: number;
-  recent: (LiveChatMessage & { evidenceId: string })[];
+  recent: LiveMessage[];
 }
+
+export type LiveMessage = LiveChatMessage & { evidenceId: string };
 
 const recentLimit = 30;
 const recentWindow = 2 * 60 * 1000;
@@ -62,6 +65,9 @@ export function openLiveRooms(db: Database) {
     db.delete(table).where(eq(table.platform, platform)).run();
 
   const connections = new Map<LivePlatform, RoomConnection>();
+  /** 去重后的新弹幕广播：实时弹幕浮窗与自动提醒都订阅它。 */
+  const events = new EventEmitter<{ message: [LiveMessage] }>();
+  events.setMaxListeners(0);
 
   function stop(platform: LivePlatform) {
     const previous = connections.get(platform);
@@ -108,8 +114,14 @@ export function openLiveRooms(db: Database) {
           connection.error = explainFailure(error);
         },
         onMessage(message) {
-          if (connections.get(platform) === connection) {
-            rememberMessage(connection, message);
+          if (connections.get(platform) !== connection) {
+            return;
+          }
+
+          const remembered = rememberMessage(connection, message);
+
+          if (remembered) {
+            events.emit('message', remembered);
           }
         },
       });
@@ -127,6 +139,27 @@ export function openLiveRooms(db: Database) {
   return {
     status,
     connect,
+    onMessage(listener: (message: LiveMessage) => void) {
+      events.on('message', listener);
+
+      return () => events.off('message', listener);
+    },
+    /** 先推送最近的弹幕快照，再逐条推送新弹幕。 */
+    async *watch(platform: LivePlatform, signal?: AbortSignal) {
+      const updates = on(events, 'message', { signal });
+
+      try {
+        yield connections.get(platform)?.recent ?? [];
+
+        for await (const [message] of updates as AsyncIterableIterator<[LiveMessage]>) {
+          if (message.platform === platform) {
+            yield [message];
+          }
+        }
+      } finally {
+        await updates.return?.();
+      }
+    },
     start() {
       platforms.forEach(connect);
     },
@@ -168,17 +201,21 @@ function rememberMessage(connection: RoomConnection, message: LiveChatMessage) {
   const key = message.deduplicationKey;
 
   if (key && connection.recent.some(item => item.deduplicationKey === key)) {
-    return;
+    return undefined;
   }
 
-  connection.received += 1;
-  connection.recent.push({
+  const remembered: LiveMessage = {
     ...message,
     evidenceId: randomUUID(),
     text: message.text.slice(0, 300),
-  });
+  };
+
+  connection.received += 1;
+  connection.recent.push(remembered);
 
   if (connection.recent.length > recentLimit) {
     connection.recent.shift();
   }
+
+  return remembered;
 }

@@ -34,6 +34,7 @@ import {
   CircleCheck,
   CircleX,
   LoaderCircle,
+  MessageSquareText,
   PanelLeft,
   PanelRight,
   Plus,
@@ -90,6 +91,7 @@ import { AttachmentChip, ChatComposer } from './chat-composer.tsx';
 import type { ComposerMessage } from './chat-composer.tsx';
 import { ChatMarkdown } from './chat-markdown.tsx';
 import { chatModelKey } from './chat-model-controls.tsx';
+import { DanmakuPanel } from './danmaku-panel.tsx';
 import { kubaiMixed } from './kubai-colors.ts';
 import { roomSummary, statusLabels, StatusDot, useRoom } from './live-status.tsx';
 import { MemoryPage } from './memory-page.tsx';
@@ -160,6 +162,8 @@ interface Shell {
   setSidebarOpen: (open: boolean) => void;
   browserOpen: boolean;
   setBrowserOpen: (open: boolean) => void;
+  danmakuOpen: boolean;
+  setDanmakuOpen: (open: boolean) => void;
   openLogin: (platform: LivePlatform, trigger: HTMLButtonElement) => void;
 }
 
@@ -168,6 +172,8 @@ const shellContext = createContext<Shell>({
   setSidebarOpen: () => undefined,
   browserOpen: true,
   setBrowserOpen: () => undefined,
+  danmakuOpen: false,
+  setDanmakuOpen: () => undefined,
   openLogin: () => undefined,
 });
 
@@ -175,6 +181,7 @@ function Workspace() {
   const client = useQueryClient();
   const [sidebarOpen, setSidebarOpen] = useStoredFlag('herald-sidebar-open', true);
   const [browserOpen, setBrowserOpen] = useStoredFlag('herald-browser-open', true);
+  const [danmakuOpen, setDanmakuOpen] = useStoredFlag('herald-danmaku-open', false);
 
   const [login, setLogin] = useState<{
     platform: LivePlatform;
@@ -187,6 +194,8 @@ function Workspace() {
     setSidebarOpen,
     browserOpen,
     setBrowserOpen,
+    danmakuOpen,
+    setDanmakuOpen,
     openLogin: (platform, trigger) => setLogin({ platform, trigger, open: true }),
   };
 
@@ -464,7 +473,9 @@ function WindowNav() {
 }
 
 function Topbar() {
-  const { sidebarOpen, browserOpen, setBrowserOpen } = useContext(shellContext);
+  const { sidebarOpen, browserOpen, setBrowserOpen, danmakuOpen, setDanmakuOpen } =
+    useContext(shellContext);
+
   const pathname = useLocation({ select: location => location.pathname });
   const titles: Record<string, string> = { '/memory': '记忆', '/settings': '设置' };
   const pageTitle = titles[pathname];
@@ -482,7 +493,18 @@ function Topbar() {
           <Button
             variant="ghost"
             size="icon-sm"
-            className="text-muted-foreground hover:text-foreground ml-auto"
+            className="text-muted-foreground hover:text-foreground aria-pressed:text-foreground ml-auto"
+            aria-pressed={danmakuOpen}
+            aria-label={danmakuOpen ? '隐藏实时弹幕' : '显示实时弹幕'}
+            title={danmakuOpen ? '隐藏实时弹幕' : '显示实时弹幕'}
+            onClick={() => setDanmakuOpen(!danmakuOpen)}
+          >
+            <MessageSquareText />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className="text-muted-foreground hover:text-foreground"
             aria-pressed={browserOpen}
             aria-label={browserOpen ? '收起网页预览' : '展开网页预览'}
             title={browserOpen ? '收起网页预览' : '展开网页预览'}
@@ -530,7 +552,8 @@ function LiveBadge({ platform }: { platform: LivePlatform }) {
 }
 
 function HomeLayout() {
-  const { browserOpen, setBrowserOpen } = useContext(shellContext);
+  const { browserOpen, setBrowserOpen, danmakuOpen, setDanmakuOpen } = useContext(shellContext);
+  const conversation = useCurrentConversation();
   const browser = usePanelRef();
 
   const { defaultLayout, onLayoutChanged } = useDefaultLayout({
@@ -573,8 +596,15 @@ function HomeLayout() {
         onLayoutChanged={onLayoutChanged}
       >
         <ResizablePanel id="conversation" defaultSize="60%" minSize="360px">
-          <main className="h-full min-w-0">
+          <main className="relative h-full min-w-0">
             <Outlet />
+            {danmakuOpen && conversation && (
+              <DanmakuPanel
+                key={conversation.platform}
+                platform={conversation.platform}
+                onClose={() => setDanmakuOpen(false)}
+              />
+            )}
           </main>
         </ResizablePanel>
         <ResizableHandle className="workbench-divider" aria-label="调整网页预览宽度" />

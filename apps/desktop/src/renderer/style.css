@@ -567,6 +567,38 @@ a:focus-visible {
   pointer-events: none;
   animation: fade-up 320ms var(--ease-out) both;
 }
+.danmaku-panel {
+  position: absolute;
+  z-index: 2;
+  top: 12px;
+  right: 12px;
+  display: flex;
+  width: min(320px, calc(100% - 24px));
+  max-height: min(58%, 520px);
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--popover) 94%, transparent);
+  box-shadow: 0 16px 40px #00000073;
+  backdrop-filter: blur(12px);
+  transform-origin: top right;
+  animation: danmaku-in 220ms var(--ease-out) both;
+}
+@keyframes danmaku-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.96);
+  }
+}
+.danmaku-list {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--muted-foreground) 32%, transparent) transparent;
+  overscroll-behavior: contain;
+}
+.danmaku-row {
+  animation: fade-up 220ms var(--ease-out) both;
+}
 .chat-composer {
   position: absolute;
   z-index: 1;

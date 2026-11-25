@@ -49,6 +49,9 @@ export function createRouter(
     },
     rooms: {
       status: os.input(platform).handler(({ input }) => workspace.rooms.status(input)),
+      watch: os
+        .input(platform)
+        .handler(({ input, signal }) => workspace.rooms.watch(input, signal)),
       reconnect: os.input(platform).handler(({ input }) => {
         workspace.rooms.connect(input);
 
