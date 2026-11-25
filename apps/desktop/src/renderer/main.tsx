@@ -23,7 +23,6 @@ import {
 import type { KubaiIconComponent } from 'kubai-icons-react';
 import HomeIcon from 'kubai-icons-react/icons/home';
 import Lightbulb from 'kubai-icons-react/icons/lightbulb';
-import MessageCirclePlus from 'kubai-icons-react/icons/message-circle-plus';
 import Messages from 'kubai-icons-react/icons/messages';
 import MemoryIcon from 'kubai-icons-react/icons/notebook';
 import SettingsIcon from 'kubai-icons-react/icons/sliders';
@@ -38,6 +37,7 @@ import {
   LoaderCircle,
   PanelLeft,
   PanelRight,
+  Plus,
   Terminal,
   X,
 } from 'lucide-react';
@@ -234,7 +234,6 @@ function Sidebar() {
           <WindowNav />
         </div>
         <nav className="grid gap-px" aria-label="页面">
-          <NewConversationMenu />
           <NavItem
             to="/"
             label="工作台"
@@ -257,7 +256,10 @@ function Sidebar() {
             current={pathname === '/settings'}
           />
         </nav>
-        <h2 className="nav-section">会话</h2>
+        <div className="nav-section">
+          <h2>会话</h2>
+          <NewConversationMenu />
+        </div>
         <div className="session-list grid content-start gap-px">
           {conversations?.map(item => {
             const selected = homeActive && item.id === current?.id;
@@ -284,12 +286,7 @@ function Sidebar() {
             <p className="text-muted-foreground px-2 py-1 text-xs">还没有会话</p>
           )}
         </div>
-        <section className="live-card" aria-label="直播间">
-          <h2 className="live-card-title">
-            <Link to="/settings" className="hover:text-foreground transition-colors">
-              直播间
-            </Link>
-          </h2>
+        <section className="live-rooms" aria-label="直播间">
           {platforms.map(platform => (
             <LiveRoomItem key={platform} platform={platform} />
           ))}
@@ -341,15 +338,21 @@ function NewConversationMenu() {
     <>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <button type="button" className="nav-item w-full" disabled={create.isPending}>
-            <MessageCirclePlus size={17} color={kubaiMixed.messages} trigger="parent" />
-            新建会话
-          </button>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            className="text-muted-foreground hover:text-foreground -mr-1"
+            aria-label="新建会话"
+            title="新建会话"
+            disabled={create.isPending}
+          >
+            <Plus />
+          </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent
-          className="workspace-dropdown w-(--radix-dropdown-menu-trigger-width)"
+          className="workspace-dropdown"
           side="bottom"
-          align="start"
+          align="end"
           sideOffset={4}
         >
           <DropdownMenuGroup>
@@ -362,7 +365,7 @@ function NewConversationMenu() {
         </DropdownMenuContent>
       </DropdownMenu>
       {create.isError && (
-        <p role="alert" className="error">
+        <p role="alert" className="error absolute top-full right-0 left-0">
           {create.error.message}
         </p>
       )}
@@ -481,14 +484,14 @@ function Topbar() {
           <ConversationTitle />
           <Button
             variant="ghost"
-            size="sm"
-            className="text-muted-foreground aria-pressed:text-foreground ml-auto"
+            size="icon-sm"
+            className="text-muted-foreground hover:text-foreground ml-auto"
             aria-pressed={browserOpen}
+            aria-label={browserOpen ? '收起网页预览' : '展开网页预览'}
             title={browserOpen ? '收起网页预览' : '展开网页预览'}
             onClick={() => setBrowserOpen(!browserOpen)}
           >
-            <PanelRight data-icon="inline-start" />
-            网页
+            <PanelRight />
           </Button>
         </>
       )}
