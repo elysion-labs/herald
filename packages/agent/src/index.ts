@@ -10,7 +10,7 @@ import {
 import { createHistoryAgentTools } from '@herald/history-tool';
 import type { HistoryMatch } from '@herald/history-tool';
 import type { LivePlatform } from '@herald/live';
-import { createSkillAgentTools, loadLiveSkills } from '@herald/skill-tool';
+import { createSkillAgentTools, expandSkillCommands, loadLiveSkills } from '@herald/skill-tool';
 
 export function createSessionStore(dataDirectory: string, platform: LivePlatform) {
   if (platform !== 'bilibili' && platform !== 'douyin') {
@@ -157,7 +157,7 @@ export async function createLiveAgent({
     ...tools,
   ];
 
-  return createAgentSession({
+  const created = await createAgentSession({
     cwd,
     agentDir,
     modelRuntime,
@@ -170,4 +170,9 @@ export async function createLiveAgent({
     excludeTools: ['write', 'edit', 'bash', 'powershell'],
     customTools,
   });
+
+  return {
+    ...created,
+    expandSkills: (text: string) => expandSkillCommands(text, liveSkills.skills),
+  };
 }

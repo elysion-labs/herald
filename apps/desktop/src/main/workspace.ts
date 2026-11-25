@@ -249,7 +249,7 @@ export function openWorkspace(directory: string) {
           },
         });
 
-        const { session } = await createLiveAgent({
+        const { session, expandSkills } = await createLiveAgent({
           store,
           modelRuntime,
           model,
@@ -278,7 +278,7 @@ export function openWorkspace(directory: string) {
             );
           }
 
-          await session.prompt(text);
+          await session.prompt(await expandSkills(text));
 
           const reply = session.messages.at(-1);
 
@@ -289,7 +289,7 @@ export function openWorkspace(directory: string) {
           }
 
           if (conversation.title === '新会话') {
-            rename.run(text.slice(0, 60), id);
+            rename.run((text.replace(/^(?:\/skill:\S+\s*)+/, '') || text).slice(0, 60), id);
           }
         } finally {
           unsubscribe();
