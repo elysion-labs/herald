@@ -167,6 +167,7 @@ export async function createLiveAgent({
     sessionManager,
     settingsManager: SettingsManager.inMemory({ compaction: { enabled: true } }),
     tools: customTools.map(tool => tool.name),
+    excludeTools: ['write', 'edit', 'bash', 'powershell'],
     customTools,
   });
 }
