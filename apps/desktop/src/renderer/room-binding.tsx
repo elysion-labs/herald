@@ -22,27 +22,9 @@ import { Separator } from '@/components/ui/separator';
 
 import { platformLabels } from '../shared/platforms.ts';
 import { dialogOrigin } from './dialog-origin.ts';
+import { roomQuery, statusLabels, StatusDot } from './live-status.tsx';
+import type { Room } from './live-status.tsx';
 import { rpc } from './rpc.ts';
-
-const statusLabels = {
-  idle: '未连接',
-  connecting: '连接中',
-  connected: '弹幕已连接',
-  reconnecting: '重连中',
-  stopped: '已断开',
-  failed: '连接失败',
-  disposed: '已断开',
-} as const;
-
-type Room = Awaited<ReturnType<typeof rpc.rooms.status>>;
-
-function roomQuery(platform: LivePlatform) {
-  return {
-    queryKey: ['live-room', platform],
-    queryFn: () => rpc.rooms.status(platform),
-    refetchInterval: 1500,
-  };
-}
 
 export function RoomBinding({ platform }: { platform: LivePlatform }) {
   const client = useQueryClient();
@@ -103,6 +85,7 @@ export function RoomBinding({ platform }: { platform: LivePlatform }) {
 function RoomStatus({ room }: { room: NonNullable<Room> }) {
   return (
     <Badge variant={room.state === 'failed' ? 'outline' : 'secondary'}>
+      <StatusDot room={room} />
       {statusLabels[room.state]}
     </Badge>
   );

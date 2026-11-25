@@ -69,21 +69,32 @@ function ProviderSettings({ state }: { state: Catalog }) {
         <PresetKeys providers={state.providers.filter(item => !item.isCustom)} />
       </TabsContent>
       <TabsContent value="custom" className="grid gap-4">
-        <Select value={editing} onValueChange={setEditing}>
-          <SelectTrigger aria-label="管理自定义供应商">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent position="popper" align="start">
-            <SelectGroup>
-              {state.custom.map(item => (
-                <SelectItem value={item.id} key={item.id}>
-                  {item.name}
-                </SelectItem>
-              ))}
-              <SelectItem value={newProvider}>新建供应商</SelectItem>
-            </SelectGroup>
-          </SelectContent>
-        </Select>
+        {state.custom.length > 0 && (
+          <div className="flex flex-wrap gap-1.5" role="group" aria-label="自定义供应商">
+            {state.custom.map(item => (
+              <Button
+                key={item.id}
+                type="button"
+                size="sm"
+                variant={item.id === editing ? 'secondary' : 'ghost'}
+                aria-pressed={item.id === editing}
+                onClick={() => setEditing(item.id)}
+              >
+                {item.name}
+              </Button>
+            ))}
+            <Button
+              type="button"
+              size="sm"
+              variant={editing === newProvider ? 'secondary' : 'ghost'}
+              aria-pressed={editing === newProvider}
+              onClick={() => setEditing(newProvider)}
+            >
+              <Plus data-icon="inline-start" />
+              新建
+            </Button>
+          </div>
+        )}
         <CustomProviderForm key={editing} existing={selected} onCreated={setEditing} />
       </TabsContent>
     </Tabs>

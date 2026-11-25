@@ -24,6 +24,7 @@
     "cn": "catalog:",
     "kubai-icons-react": "0.15.0",
     "lucide-react": "^0.577.0",
+    "markstream-react": "catalog:",
     "radix-ui": "^1",
     "react": "^19",
     "react-dom": "^19",

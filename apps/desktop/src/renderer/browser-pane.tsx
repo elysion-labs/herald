@@ -138,11 +138,12 @@ function BrowserTabList({
   );
 }
 
-export function BrowserPane() {
+export function BrowserPane({ onTabOpened }: { onTabOpened?: () => void }) {
   const surface = useRef<HTMLDivElement>(null);
   const addressInput = useRef<HTMLInputElement>(null);
   const [state, setState] = useState(emptyBrowser);
   const [draft, setDraft] = useState<AddressDraft>();
+  const tabOpened = useRef(onTabOpened);
   const tabId = state.activeId;
   const address = draft?.id === tabId ? draft.text : state.url;
 
@@ -155,13 +156,24 @@ export function BrowserPane() {
   });
 
   useEffect(() => {
+    tabOpened.current = onTabOpened;
+  }, [onTabOpened]);
+
+  useEffect(() => {
     const controller = new AbortController();
 
     async function watch() {
       try {
         const updates = await rpc.browser.watch(undefined, { signal: controller.signal });
+        let tabCount: number | undefined;
 
         for await (const update of updates) {
+          // 首条状态只用于同步；之后标签页变多（例如 Herald 打开网页）时让外层展开预览。
+          if (tabCount !== undefined && update.tabs.length > tabCount) {
+            tabOpened.current?.();
+          }
+
+          tabCount = update.tabs.length;
           setState(update);
 
           if (!update.open) {
@@ -247,7 +259,7 @@ export function BrowserPane() {
           <Plus />
         </Button>
       </div>
-      <div className="pane-header browser-toolbar">
+      <div className="browser-toolbar">
         <Button
           variant="ghost"
           size="icon-sm"
@@ -293,6 +305,7 @@ export function BrowserPane() {
         >
           <Input
             ref={addressInput}
+            className="bg-background h-8 rounded-full border-transparent px-3.5 text-[13px]"
             aria-label="网页地址"
             placeholder="输入网页地址"
             value={address}
@@ -316,7 +329,7 @@ export function BrowserPane() {
         <Empty className="surface-enter">
           <EmptyHeader>
             <EmptyMedia>
-              <Globe size={38} color={kubaiMixed.globe} aria-hidden="true" />
+              <Globe size={38} color={kubaiMixed.globe} />
             </EmptyMedia>
             <EmptyTitle role="heading" aria-level={2}>
               网页预览

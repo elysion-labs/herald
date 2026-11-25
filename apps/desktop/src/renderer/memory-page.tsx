@@ -1,5 +1,6 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useRef, useState } from 'react';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { NotebookText, Plus, Quote, Search, Trash2 } from 'lucide-react';
+import { useDeferredValue, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 
 import { Button } from '@/components/ui/button';
@@ -14,6 +15,7 @@ import {
 } from '@/components/ui/dialog';
 import { Field, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
+import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group';
 import {
   Select,
   SelectContent,
@@ -22,15 +24,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 
 import { platformLabels, platforms } from '../shared/platforms.ts';
 import { dialogOrigin } from './dialog-origin.ts';
+import { PlatformIcon } from './platform-icon.tsx';
 import { rpc } from './rpc.ts';
 
 const evidenceLabels = { manual: '手动录入', streamer: '主播提供', danmaku: '弹幕自述' };
 const scopes = ['shared', ...platforms] as const;
 const scopeLabels = { shared: '通用记忆', ...platformLabels };
+const tabLabels = { shared: '通用', ...platformLabels };
 type MemorySave = Parameters<typeof rpc.memory.save>[0];
 type MemoryRemove = Parameters<typeof rpc.memory.remove>[0];
 type MemoryRecord = Awaited<ReturnType<typeof rpc.memory.save>>;
@@ -39,7 +44,7 @@ type MemoryScope = MemorySave['scope'];
 export function MemoryPage() {
   const [scope, setScope] = useState<MemoryScope>('shared');
   const [searchText, setSearchText] = useState('');
-  const [search, setSearch] = useState('');
+  const search = useDeferredValue(searchText.trim());
   const [selectedId, setSelectedId] = useState<string>();
 
   const result = useQuery({
@@ -48,92 +53,141 @@ export function MemoryPage() {
       search
         ? rpc.memory.search({ scope, query: search })
         : { matches: await rpc.memory.list(scope) },
+    placeholderData: keepPreviousData,
   });
 
   const records = result.data?.matches ?? [];
   const selected = records.find(item => item.id === selectedId);
 
   return (
-    <main className="page settings-page surface-enter">
-      <div className="mx-auto max-w-3xl">
-        <h1>记忆</h1>
-        <div className="mb-4 flex flex-wrap items-center gap-2">
-          <form
-            className="flex min-w-0 flex-1 flex-wrap items-center gap-2"
-            onSubmit={event => {
-              event.preventDefault();
-              setSearch(searchText.trim());
+    <main className="surface-enter flex h-full min-h-0 w-full">
+      <aside className="border-border flex w-80 shrink-0 flex-col border-r" aria-label="记忆列表">
+        <div className="grid gap-2 px-3 pt-3 pb-2">
+          <Tabs
+            value={scope}
+            onValueChange={value => {
+              const next = scopes.find(item => item === value);
+
+              if (next) {
+                setScope(next);
+                setSelectedId(undefined);
+              }
             }}
           >
-            <ScopeSelect
-              value={scope}
-              onChange={value => {
-                setScope(value);
-                setSelectedId(undefined);
+            <TabsList className="w-full">
+              {scopes.map(item => (
+                <TabsTrigger value={item} key={item}>
+                  {tabLabels[item]}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
+          <div className="flex items-center gap-1.5">
+            <InputGroup className="h-8 flex-1">
+              <InputGroupAddon>
+                <Search />
+              </InputGroupAddon>
+              <InputGroupInput
+                aria-label="搜索记忆"
+                placeholder="搜索内容、原文或 UID"
+                value={searchText}
+                maxLength={240}
+                onChange={event => setSearchText(event.target.value)}
+              />
+            </InputGroup>
+            <CaptureDialog
+              scope={scope}
+              onSaved={record => {
+                setScope(record.scope);
+                setSelectedId(record.id);
+                setSearchText('');
               }}
             />
-            <Input
-              aria-label="搜索记忆"
-              className="min-w-32 flex-1"
-              placeholder="搜索记忆"
-              value={searchText}
-              maxLength={240}
-              onChange={event => setSearchText(event.target.value)}
-            />
-            <Button variant="outline" type="submit">
-              搜索
-            </Button>
-          </form>
-          <CaptureDialog
-            scope={scope}
-            onSaved={record => {
-              setScope(record.scope);
-              setSelectedId(record.id);
-              setSearch('');
-              setSearchText('');
-            }}
-          />
+          </div>
         </div>
-        {result.isPending && (
-          <p role="status" className="text-muted-foreground text-sm">
-            正在加载记忆…
-          </p>
-        )}
-        {result.isError && (
-          <p role="alert" className="text-destructive text-sm">
-            {result.error.message}
-          </p>
-        )}
-        {result.isSuccess && !records.length && (
-          <p className="text-muted-foreground text-sm">
-            {search ? '没有匹配的记忆' : '还没有记录'}
-          </p>
-        )}
-        <div className="grid gap-2">
+        <p
+          className="text-muted-foreground px-4 pt-1 pb-1.5 text-[11px] tabular-nums"
+          aria-live="polite"
+        >
+          {result.isSuccess && `${records.length} 条${search ? '匹配' : '记忆'}`}
+        </p>
+        <div className="memory-list grid min-h-0 flex-1 content-start gap-px overflow-y-auto px-2 pb-2">
+          {result.isPending && (
+            <p role="status" className="text-muted-foreground px-2 py-3 text-sm">
+              正在加载…
+            </p>
+          )}
+          {result.isError && (
+            <p role="alert" className="text-destructive px-2 py-3 text-sm">
+              {result.error.message}
+            </p>
+          )}
+          {result.isSuccess && !records.length && (
+            <p className="text-muted-foreground px-2 py-6 text-center text-sm">
+              {search ? '没有匹配的记忆' : '还没有记录'}
+            </p>
+          )}
           {records.map(record => (
-            <Button
+            <button
+              type="button"
               key={record.id}
-              variant={record.id === selectedId ? 'secondary' : 'outline'}
-              className="h-auto w-full min-w-0 justify-start gap-2 px-3 py-2 text-left"
+              data-selected={record.id === selectedId}
               aria-pressed={record.id === selectedId}
+              className="memory-row hover:bg-secondary/60 data-[selected=true]:bg-secondary focus-visible:ring-ring flex min-w-0 items-start gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors outline-none focus-visible:ring-1"
               onClick={() => setSelectedId(record.id)}
             >
-              {record.viewerId && (
-                <span className="text-muted-foreground truncate">{record.viewerId}</span>
-              )}
-              <span className="min-w-0 flex-1 truncate">{record.fact}</span>
-            </Button>
+              <ScopeAvatar scope={record.scope} />
+              <span className="grid min-w-0 flex-1 gap-0.5">
+                <span className="line-clamp-2 text-[13px] leading-snug">{record.fact}</span>
+                <span className="text-muted-foreground flex min-w-0 gap-1.5 text-[11px]">
+                  <span className="truncate">
+                    {record.viewerId
+                      ? `UID ${record.viewerId}`
+                      : evidenceLabels[record.evidence.type]}
+                  </span>
+                  <span className="ml-auto shrink-0 tabular-nums">
+                    {shortDate(record.createdAt)}
+                  </span>
+                </span>
+              </span>
+            </button>
           ))}
         </div>
-        {selected && (
+      </aside>
+      <section className="memory-list flex min-w-0 flex-1 flex-col" aria-label="记忆详情">
+        {selected ? (
           <MemoryPreview
             key={selected.id}
             record={selected}
             onRemoved={() => setSelectedId(undefined)}
           />
+        ) : (
+          <p className="text-muted-foreground grid flex-1 place-items-center text-sm">
+            {records.length ? '选择左侧记忆查看详情' : '暂无记忆'}
+          </p>
         )}
-      </div>
+      </section>
     </main>
+  );
+}
+
+function shortDate(timestamp: number) {
+  const date = new Date(timestamp);
+
+  return new Date().getFullYear() === date.getFullYear()
+    ? date.toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })
+    : date.toLocaleDateString('zh-CN');
+}
+
+function ScopeAvatar({ scope }: { scope: MemoryScope }) {
+  return (
+    <span className="bg-secondary mt-0.5 grid size-7 shrink-0 place-items-center rounded-full">
+      {scope === 'shared' ? (
+        <NotebookText className="text-muted-foreground size-3.5" />
+      ) : (
+        <PlatformIcon platform={scope} size={14} />
+      )}
+    </span>
   );
 }
 
@@ -209,8 +263,15 @@ function CaptureDialog({
       }}
     >
       <DialogTrigger asChild>
-        <Button ref={trigger} variant="secondary">
-          手动录入
+        <Button
+          ref={trigger}
+          variant="ghost"
+          size="icon-sm"
+          className="text-muted-foreground"
+          aria-label="手动录入记忆"
+          title="手动录入"
+        >
+          <Plus />
         </Button>
       </DialogTrigger>
       <DialogContent className="login-dialog" style={origin}>
@@ -281,21 +342,24 @@ function MemoryPreview({ record, onRemoved }: { record: MemoryRecord; onRemoved:
     },
   });
 
+  const created = new Date(record.createdAt);
+
   return (
-    <section className="border-border mt-4 rounded-xl border p-4">
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <p className="text-muted-foreground text-sm">
-          {evidenceLabels[record.evidence.type]} · {new Date(record.createdAt).toLocaleString()}
-        </p>
-        <div className="flex gap-2">
+    <>
+      <div className="border-border flex h-11 shrink-0 items-center gap-2 border-b px-5">
+        <ScopeAvatar scope={record.scope} />
+        <span className="text-sm">{scopeLabels[record.scope]}</span>
+        <div className="ml-auto flex items-center gap-1">
           {confirmRemove && (
-            <Button variant="ghost" onClick={() => setConfirmRemove(false)}>
+            <Button variant="ghost" size="sm" onClick={() => setConfirmRemove(false)}>
               取消
             </Button>
           )}
           <Button
             variant={confirmRemove ? 'destructive' : 'ghost'}
-            size="sm"
+            size={confirmRemove ? 'sm' : 'icon-sm'}
+            aria-label="删除记忆"
+            title="删除记忆"
             disabled={remove.isPending}
             onClick={() => {
               if (confirmRemove) {
@@ -305,21 +369,44 @@ function MemoryPreview({ record, onRemoved }: { record: MemoryRecord; onRemoved:
               }
             }}
           >
-            {confirmRemove ? '确认删除' : '删除'}
+            <Trash2 />
+            {confirmRemove && '确认删除'}
           </Button>
         </div>
       </div>
-      {remove.isError && (
-        <p role="alert" className="text-destructive mb-2 text-sm">
-          {remove.error.message}
-        </p>
-      )}
-      <pre
-        aria-label="记忆 Markdown"
-        className="bg-muted/50 max-h-96 overflow-auto rounded-lg p-3 text-xs break-all whitespace-pre-wrap"
-      >
-        {record.markdown}
-      </pre>
-    </section>
+      <article className="memory-list min-h-0 flex-1 overflow-y-auto">
+        <div className="surface-enter mx-auto grid max-w-2xl gap-8 px-8 py-10">
+          <h2 className="text-xl leading-relaxed font-medium tracking-tight">{record.fact}</h2>
+          {remove.isError && (
+            <p role="alert" className="text-destructive text-sm">
+              {remove.error.message}
+            </p>
+          )}
+          <dl className="grid grid-cols-[5.5rem_minmax(0,1fr)] gap-x-4 gap-y-2.5 text-sm">
+            <dt className="text-muted-foreground">范围</dt>
+            <dd>{scopeLabels[record.scope]}</dd>
+            {record.viewerId && (
+              <>
+                <dt className="text-muted-foreground">观众 UID</dt>
+                <dd className="tabular-nums">{record.viewerId}</dd>
+              </>
+            )}
+            <dt className="text-muted-foreground">来源</dt>
+            <dd>{evidenceLabels[record.evidence.type]}</dd>
+            <dt className="text-muted-foreground">记录时间</dt>
+            <dd className="tabular-nums">
+              <time dateTime={created.toISOString()}>{created.toLocaleString('zh-CN')}</time>
+            </dd>
+          </dl>
+          <figure className="grid gap-2">
+            <figcaption className="text-muted-foreground text-xs">来源原文</figcaption>
+            <blockquote className="bg-surface border-border relative rounded-xl border px-5 py-4 text-sm leading-relaxed whitespace-pre-wrap">
+              <Quote className="text-muted-foreground/40 absolute top-3 right-3 size-4" />
+              {record.quote}
+            </blockquote>
+          </figure>
+        </div>
+      </article>
+    </>
   );
 }

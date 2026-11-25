@@ -1,8 +1,11 @@
-// Kubai 官网 Mixed 色板按图标名称分配的主色。
+// Kubai 官网 Mixed 色板按图标语义分配的主色；界面其余部分保持中性，只让图标带色。
 export const kubaiMixed = {
   home: '#8B5CF6',
   notebook: '#22C55E',
   sliders: '#F97316',
-  folder: '#22C55E',
-  globe: '#8B5CF6',
+  lightbulb: '#EAB308',
+  tv: '#F43F5E',
+  sparkles: '#8B5CF6',
+  messages: '#8B5CF6',
+  globe: '#3B82F6',
 };

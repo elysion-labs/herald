@@ -26,9 +26,9 @@ async function start() {
       height: 920,
       minWidth: 900,
       minHeight: 580,
-      backgroundColor: '#0a0a0a',
+      backgroundColor: '#0b0b0d',
       titleBarStyle: 'hidden',
-      titleBarOverlay: { color: '#0a0a0a', symbolColor: '#fafafa', height: 35 },
+      titleBarOverlay: { color: '#0b0b0d', symbolColor: '#f4f4f5', height: 40 },
       autoHideMenuBar: true,
       webPreferences: {
         preload: join(import.meta.dirname, '../preload/index.cjs'),
