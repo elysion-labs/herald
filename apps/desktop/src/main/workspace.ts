@@ -9,6 +9,7 @@ import { ORPCError } from '@orpc/server';
 import { desc, eq } from 'drizzle-orm';
 
 import type { ChatModelChoice } from '../shared/model-settings.ts';
+import { openAppSettings } from './app-settings.ts';
 import { openDatabase, schema } from './db/index.ts';
 import { openLiveRooms } from './live-rooms.ts';
 import { openModelSettings } from './model-settings.ts';
@@ -107,6 +108,7 @@ export function openWorkspace(directory: string) {
 
   const running = new Set<string>();
   const models = openModelSettings(db, directory);
+  const settings = openAppSettings(db, directory);
   const memory = openMemoryLibrary(join(directory, 'memory'));
 
   function getConversation(id: string) {
@@ -125,6 +127,7 @@ export function openWorkspace(directory: string) {
     models,
     memory,
     rooms,
+    settings,
     create(platform: LivePlatform) {
       const conversation: Conversation = {
         id: randomUUID(),
@@ -257,6 +260,8 @@ export function openWorkspace(directory: string) {
           thinking,
           tools: [...(tools ?? []), ...memoryTools],
           onTitle: title => rename(title, id),
+          systemPrompt: settings.agent().systemPrompt,
+          builtinTools: settings.agent().builtinTools,
           ...target,
         });
 

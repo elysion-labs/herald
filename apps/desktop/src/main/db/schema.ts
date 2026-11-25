@@ -33,3 +33,9 @@ export const conversationModels = sqliteTable('conversation_models', {
     .references(() => conversations.id, { onDelete: 'cascade' }),
   choice: text({ mode: 'json' }).$type<ChatModelChoice>().notNull(),
 });
+
+/** 应用级设置，键值对，值为 JSON。 */
+export const appSettings = sqliteTable('app_settings', {
+  key: text().primaryKey(),
+  value: text({ mode: 'json' }).notNull(),
+});

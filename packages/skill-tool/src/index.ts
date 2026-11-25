@@ -1,8 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
-import { defineTool, loadSkills, stripFrontmatter } from '@earendil-works/pi-coding-agent';
-import { Type } from 'typebox';
+import { stripFrontmatter } from '@earendil-works/pi-coding-agent';
+import type { Skill } from '@earendil-works/pi-coding-agent';
 
 const bundledSkills = [
   'find-live-topic',
@@ -11,19 +11,14 @@ const bundledSkills = [
   'remember-viewer',
 ] as const;
 
-export function loadLiveSkills(
-  cwd: string,
-  agentDir: string,
-  enabled: readonly string[] = bundledSkills,
-) {
-  const skillPaths = bundledSkills
+/** Herald 自带 skill 的 SKILL.md 路径，交给 pi 的 DefaultResourceLoader 一起发现。 */
+export function bundledSkillPaths(enabled: readonly string[] = bundledSkills) {
+  return bundledSkills
     .filter(name => enabled.includes(name))
     .map(name => fileURLToPath(new URL(`../skills/${name}/SKILL.md`, import.meta.url)));
-
-  return loadSkills({ cwd, agentDir, skillPaths, includeDefaults: false });
 }
 
-type LiveSkill = ReturnType<typeof loadLiveSkills>['skills'][number];
+type LiveSkill = Pick<Skill, 'name' | 'filePath' | 'baseDir'>;
 const skillCommand = /^\/skill:(\S+)(?:\s+|$)/;
 
 /**
@@ -50,34 +45,4 @@ export async function expandSkillCommands(text: string, skills: readonly LiveSki
   }
 
   return blocks.length ? [...blocks, rest.trim()].filter(Boolean).join('\n\n') : text;
-}
-
-export function createSkillAgentTools({
-  skills,
-}: {
-  skills: ReturnType<typeof loadLiveSkills>['skills'];
-}) {
-  const selectableSkills = skills.filter(skill => !skill.disableModelInvocation);
-
-  return [
-    defineTool({
-      name: 'load_skill',
-      label: '加载 Skill',
-      description: `按名称加载 Herald 的工作流程。${selectableSkills
-        .map(skill => `${skill.name}: ${skill.description}`)
-        .join(' ')}`,
-      parameters: Type.Object({ name: Type.String({ minLength: 1, maxLength: 64 }) }),
-      async execute(_callId, { name }, signal) {
-        const skill = selectableSkills.find(item => item.name === name);
-
-        if (!skill) {
-          throw new Error('Skill is unavailable');
-        }
-
-        const markdown = await readFile(skill.filePath, { encoding: 'utf8', signal });
-
-        return { content: [{ type: 'text', text: markdown }], details: { name } };
-      },
-    }),
-  ];
 }

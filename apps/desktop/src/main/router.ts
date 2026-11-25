@@ -5,6 +5,7 @@ import { createBrowserAgentTools } from '@herald/browser-tool';
 import { os } from '@orpc/server';
 import { z } from 'zod';
 
+import { agentSettings } from '../shared/agent-settings.ts';
 import {
   chatModelChoice,
   customProviderInput,
@@ -75,6 +76,13 @@ export function createRouter(
       remove: os
         .input(memoryRecord)
         .handler(({ input }) => workspace.memory.remove(input.scope, input.id)),
+    },
+    settings: {
+      agent: os.handler(() => workspace.settings.agentState()),
+      saveAgent: os
+        .input(agentSettings.partial())
+        .handler(({ input }) => workspace.settings.saveAgent(input)),
+      openAgentDir: os.handler(() => workspace.settings.openAgentDir()),
     },
     models: {
       state: os.handler(() => workspace.models.state()),
