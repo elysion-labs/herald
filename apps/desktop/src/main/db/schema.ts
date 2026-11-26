@@ -9,6 +9,12 @@ export const conversations = sqliteTable('conversations', {
   platform: text({ enum: platforms }).notNull(),
   title: text().notNull(),
   createdAt: integer('created_at').notNull(),
+  /** chat：普通聊天，不注入弹幕；assistant：主播助手，注入新弹幕并接收提醒，每个平台最多一个。 */
+  mode: text({ enum: ['chat', 'assistant'] })
+    .notNull()
+    .default('chat'),
+  /** 助手模式已注入到上下文的最后一条弹幕时间。 */
+  danmakuCursor: integer('danmaku_cursor').notNull().default(0),
 });
 
 export const platformLiveRooms = sqliteTable('platform_live_rooms', {

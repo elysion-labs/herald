@@ -159,7 +159,7 @@ function useCreateConversation() {
   const navigate = useNavigate();
 
   return useMutation({
-    mutationFn: (platform: LivePlatform) => rpc.conversations.create(platform),
+    mutationFn: (platform: LivePlatform) => rpc.conversations.create({ platform }),
     async onSuccess(conversation) {
       await queryClient.invalidateQueries(conversationsQuery);
       await navigate({ to: '/chat/$id', params: { id: conversation.id } });
