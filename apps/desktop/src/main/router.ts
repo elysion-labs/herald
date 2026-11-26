@@ -49,11 +49,26 @@ export function createRouter(
 ) {
   const browserTools = createBrowserAgentTools({ webContents: browser.webContents });
 
+  /** agent 运行期间新开的标签页，在运行结束后关闭。 */
+  async function closingAgentTabs<T>(run: () => Promise<T>) {
+    const before = browser.agentTabs();
+
+    try {
+      return await run();
+    } finally {
+      for (const id of browser.agentTabs()) {
+        if (!before.has(id)) {
+          browser.close(id);
+        }
+      }
+    }
+  }
+
   const assistant = createLiveAssistant({
     assistantConversation: platform => workspace.assistantConversation(platform)?.id,
     isRunning: id => workspace.isRunning(id),
     remind: (id, trigger, publish: (turns: ReplyTurns) => void) =>
-      workspace.remind(id, trigger, browserTools, publish),
+      closingAgentTabs(() => workspace.remind(id, trigger, browserTools, publish)),
     settings: () => workspace.settings.assistant(),
     viewerFacts: (platform, viewerId) =>
       workspace.memory
@@ -176,16 +191,16 @@ export function createRouter(
           const emitter = new EventEmitter();
           const updates = on(emitter, 'reply', { signal });
           const publish = (update: Update) => emitter.emit('reply', update);
-          void workspace
-            .send(input.id, input, browserTools, turns => publish({ turns }))
-            .then(
-              () => publish({ done: true }),
-              (error: unknown) =>
-                publish({
-                  done: true,
-                  error: error instanceof Error ? error : new Error('聊天请求失败'),
-                }),
-            );
+          void closingAgentTabs(() =>
+            workspace.send(input.id, input, browserTools, turns => publish({ turns })),
+          ).then(
+            () => publish({ done: true }),
+            (error: unknown) =>
+              publish({
+                done: true,
+                error: error instanceof Error ? error : new Error('聊天请求失败'),
+              }),
+          );
 
           try {
             for await (const [update] of updates as AsyncIterableIterator<[Update]>) {

@@ -88,6 +88,8 @@ export function createWorkspaceBrowser(window: BrowserWindow) {
 
   const events = new EventEmitter();
   const tabs = new Map<string, WebContentsView>();
+  /** agent 自己打开的标签页，运行结束后由调用方关闭。 */
+  const agentTabs = new Set<string>();
   const favicons = new Map<string, string>();
   let activeId: string | null = null;
   let bounds: Rectangle | undefined;
@@ -180,6 +182,7 @@ export function createWorkspaceBrowser(window: BrowserWindow) {
     const ids = [...tabs.keys()];
     const index = ids.indexOf(id);
     tabs.delete(id);
+    agentTabs.delete(id);
     favicons.delete(id);
 
     if (activeId === id) {
@@ -332,7 +335,12 @@ export function createWorkspaceBrowser(window: BrowserWindow) {
 
   const webContents: BrowserContents = {
     list,
-    open: url => openTab(agentUrl(url)),
+    async open(url) {
+      const id = await openTab(agentUrl(url));
+      agentTabs.add(id);
+
+      return id;
+    },
     select,
     navigate: (url, id) => navigate(agentUrl(url), id),
     async snapshot(id) {
@@ -394,6 +402,8 @@ export function createWorkspaceBrowser(window: BrowserWindow) {
 
   return {
     webContents,
+    /** 当前由 agent 打开且仍未关闭的标签页。 */
+    agentTabs: () => new Set(agentTabs),
     navigate,
     openTab,
     select,
