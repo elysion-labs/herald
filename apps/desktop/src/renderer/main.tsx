@@ -98,6 +98,7 @@ import { attachmentPattern } from '../shared/attachments.ts';
 import { platformLabels, platforms } from '../shared/platforms.ts';
 import { AgentCapabilitySettings, SystemPromptSettings } from './agent-settings.tsx';
 import { AssistantModeToggle } from './assistant-mode.tsx';
+import { AssistantSettingsPanel } from './assistant-settings.tsx';
 import { BrowserPane } from './browser-pane.tsx';
 import { AttachmentChip, ChatComposer } from './chat-composer.tsx';
 import type { ComposerMessage } from './chat-composer.tsx';
@@ -1096,12 +1097,16 @@ function SettingsPage() {
       <Tabs defaultValue="general" className="mx-auto max-w-3xl gap-5">
         <TabsList>
           <TabsTrigger value="general">直播与模型</TabsTrigger>
+          <TabsTrigger value="assistant">直播助手</TabsTrigger>
           <TabsTrigger value="prompt">系统提示词</TabsTrigger>
           <TabsTrigger value="agent">Agent 能力</TabsTrigger>
         </TabsList>
         <TabsContent value="general" className="settings-stack grid gap-6">
           <PlatformSettings openLogin={openLogin} />
           <ModelSettings />
+        </TabsContent>
+        <TabsContent value="assistant" className="settings-stack grid gap-6">
+          <AssistantSettingsPanel />
         </TabsContent>
         <TabsContent value="prompt" className="settings-stack grid gap-6">
           <SystemPromptSettings />
