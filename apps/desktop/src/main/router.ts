@@ -90,7 +90,6 @@ export function createRouter(
       saveSettings: os
         .input(assistantSettings.partial())
         .handler(({ input }) => workspace.settings.saveAssistant(input)),
-      focus: os.input(z.uuid()).handler(({ input }) => assistant.focus(input)),
       watch: os.handler(({ signal }) => assistant.watch(signal)),
     },
     settings: {

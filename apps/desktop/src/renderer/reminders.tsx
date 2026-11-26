@@ -26,15 +26,11 @@ const triggerLabels: Record<ReminderTrigger['kind'], string> = {
 };
 
 /**
- * 聚焦当前会话并订阅后台提醒：进行中的提醒实时显示，结束后刷新历史。
+ * 订阅当前会话的后台提醒：进行中的提醒实时显示，结束后刷新历史。
  * 模型判断无需提醒（SKIP）时后端会撤销这条提醒，界面上也随之消失。
  */
 export function useLiveReminder(conversationId: string, onSettled: () => Promise<unknown>) {
   const [reminder, setReminder] = useState<LiveReminder>();
-
-  useEffect(() => {
-    void rpc.assistant.focus(conversationId).catch(() => undefined);
-  }, [conversationId]);
 
   useEffect(() => {
     const controller = new AbortController();

@@ -16,7 +16,8 @@ export type AssistantEvent =
   | { conversationId: string; phase: 'done'; delivered: boolean; error?: string };
 
 interface PlatformState {
-  conversationId?: string;
+  /** 助手会话运行中时暂存的最新一条提醒，空闲后再发。 */
+  pending?: ReminderTrigger;
   /** 冷场计时的起点：最近一条弹幕或打开会话的时刻。 */
   quietSince: number;
   silenceFired: boolean;
@@ -32,7 +33,7 @@ const periodicMinimum = 3;
 
 /**
  * 弹幕自动提醒的调度：规则触发（冷场、有记忆的观众、关注词）与定时批量分析。
- * 只在当前聚焦的会话里提醒，受冷却时间限制，会话运行中时跳过。
+ * 只发给各平台的助手模式会话，受冷却时间限制；会话运行中时暂存最新一条，空闲后补发。
  */
 export function createLiveAssistant(
   workspace: Workspace,
@@ -55,20 +56,29 @@ export function createLiveAssistant(
     ]),
   );
 
+  /** 提醒只发给该平台的助手会话。 */
+  const target = (platform: LivePlatform) => workspace.assistantConversation(platform)?.id;
+
   function fire(platform: LivePlatform, trigger: ReminderTrigger) {
     const state = states.get(platform);
-    const conversationId = state?.conversationId;
+    const conversationId = target(platform);
     const now = Date.now();
     const { cooldownSeconds } = workspace.settings.assistant();
 
-    if (
-      !state ||
-      !conversationId ||
-      now - state.lastTriggerAt < cooldownSeconds * 1000 ||
-      workspace.isRunning(conversationId)
-    ) {
+    if (!state || !conversationId || now - state.lastTriggerAt < cooldownSeconds * 1000) {
       return false;
     }
+
+    // 会话正在回复时只保留最新一条，空闲后补发；冷场提醒过时就没有意义，直接丢弃。
+    if (workspace.isRunning(conversationId)) {
+      if (trigger.kind !== 'silence') {
+        state.pending = trigger;
+      }
+
+      return false;
+    }
+
+    state.pending = undefined;
 
     state.lastTriggerAt = now;
     events.emit('event', { conversationId, phase: 'start', trigger });
@@ -131,7 +141,7 @@ export function createLiveAssistant(
     state.silenceFired = false;
     state.sincePeriodic += 1;
 
-    if (!state.conversationId) {
+    if (!target(message.platform)) {
       return;
     }
 
@@ -156,36 +166,53 @@ export function createLiveAssistant(
     }
   }
 
+  type Config = ReturnType<Workspace['settings']['assistant']>;
+
+  function checkSilence(platform: LivePlatform, state: PlatformState, config: Config, now: number) {
+    const quiet = now - state.quietSince;
+
+    if (config.silence.enabled && !state.silenceFired && quiet >= config.silence.seconds * 1000) {
+      state.silenceFired = fire(platform, { kind: 'silence', seconds: Math.round(quiet / 1000) });
+    }
+  }
+
+  function checkPeriodic(
+    platform: LivePlatform,
+    state: PlatformState,
+    config: Config,
+    now: number,
+  ) {
+    if (!config.periodic.enabled || now - state.lastPeriodicAt < config.periodic.minutes * 60_000) {
+      return;
+    }
+
+    const count = state.sincePeriodic;
+    state.lastPeriodicAt = now;
+    state.sincePeriodic = 0;
+
+    if (count >= periodicMinimum) {
+      fire(platform, { kind: 'periodic', minutes: config.periodic.minutes, count });
+    }
+  }
+
   function tick() {
     const now = Date.now();
     const config = workspace.settings.assistant();
 
     for (const [platform, state] of states) {
-      if (!state.conversationId || workspace.rooms.status(platform)?.state !== 'connected') {
+      const conversationId = target(platform);
+
+      if (!conversationId || workspace.rooms.status(platform)?.state !== 'connected') {
         continue;
       }
 
-      const quiet = now - state.quietSince;
-
-      if (config.silence.enabled && !state.silenceFired && quiet >= config.silence.seconds * 1000) {
-        state.silenceFired = fire(platform, {
-          kind: 'silence',
-          seconds: Math.round(quiet / 1000),
-        });
+      if (state.pending && !workspace.isRunning(conversationId)) {
+        fire(platform, state.pending);
+        continue;
       }
 
-      if (
-        config.periodic.enabled &&
-        now - state.lastPeriodicAt >= config.periodic.minutes * 60_000
-      ) {
-        const count = state.sincePeriodic;
-        state.lastPeriodicAt = now;
-        state.sincePeriodic = 0;
-
-        if (count >= periodicMinimum) {
-          fire(platform, { kind: 'periodic', minutes: config.periodic.minutes, count });
-        }
-      }
+      checkSilence(platform, state, config, now);
+      checkPeriodic(platform, state, config, now);
     }
   }
 
@@ -193,17 +220,6 @@ export function createLiveAssistant(
   const timer = setInterval(tick, tickInterval);
 
   return {
-    /** 主播打开某个会话时调用，之后该平台的提醒都写进这个会话。 */
-    focus(conversationId: string) {
-      const { platform } = workspace.conversation(conversationId);
-      const state = states.get(platform);
-
-      if (state && state.conversationId !== conversationId) {
-        state.conversationId = conversationId;
-        state.quietSince = Date.now();
-        state.silenceFired = false;
-      }
-    },
     async *watch(signal?: AbortSignal) {
       const updates = on(events, 'event', { signal });
 
