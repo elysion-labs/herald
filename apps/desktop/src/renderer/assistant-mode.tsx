@@ -1,7 +1,7 @@
+import { describeTrigger } from '@herald/live-assistant/settings';
+import type { ReminderTrigger } from '@herald/live-assistant/settings';
 import { useEffect, useState } from 'react';
 
-import { describeTrigger } from '../shared/assistant-settings.ts';
-import type { ReminderTrigger } from '../shared/assistant-settings.ts';
 import { rpc } from './rpc.ts';
 
 export type Conversation = Awaited<ReturnType<typeof rpc.conversations.list>>[number];

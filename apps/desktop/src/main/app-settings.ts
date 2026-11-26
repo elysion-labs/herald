@@ -1,14 +1,14 @@
 import { join } from 'node:path';
 
 import { defaultSystemPrompt } from '@herald/agent';
+import { assistantSettings, defaultAssistantSettings } from '@herald/live-assistant/settings';
+import type { AssistantSettings } from '@herald/live-assistant/settings';
 import { eq } from 'drizzle-orm';
 import { shell } from 'electron';
 import type { z } from 'zod';
 
 import { agentSettings, defaultAgentSettings } from '../shared/agent-settings.ts';
 import type { AgentSettings } from '../shared/agent-settings.ts';
-import { assistantSettings, defaultAssistantSettings } from '../shared/assistant-settings.ts';
-import type { AssistantSettings } from '../shared/assistant-settings.ts';
 import { schema } from './db/index.ts';
 import type { Database } from './db/index.ts';
 

@@ -1,3 +1,4 @@
+import type { AssistantSettings } from '@herald/live-assistant/settings';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 
@@ -6,7 +7,6 @@ import { Field, FieldContent, FieldDescription, FieldLabel } from '@/components/
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 
-import type { AssistantSettings } from '../shared/assistant-settings.ts';
 import { rpc } from './rpc.ts';
 
 const queryKey = ['assistant-settings'];

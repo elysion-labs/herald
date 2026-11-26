@@ -2,11 +2,12 @@ import { randomUUID } from 'node:crypto';
 import { EventEmitter, on } from 'node:events';
 
 import { createBrowserAgentTools } from '@herald/browser-tool';
+import { createLiveAssistant } from '@herald/live-assistant';
+import { assistantSettings } from '@herald/live-assistant/settings';
 import { os } from '@orpc/server';
 import { z } from 'zod';
 
 import { agentSettings } from '../shared/agent-settings.ts';
-import { assistantSettings } from '../shared/assistant-settings.ts';
 import { attachment, maxAttachments } from '../shared/attachments.ts';
 import {
   chatModelChoice,
@@ -16,7 +17,6 @@ import {
 } from '../shared/model-settings.ts';
 import { platforms } from '../shared/platforms.ts';
 import type { createWorkspaceBrowser } from './browser.ts';
-import { createLiveAssistant } from './live-assistant.ts';
 import { getPlatformAccount } from './platform-accounts.ts';
 import type { openWorkspace } from './workspace.ts';
 
@@ -39,12 +39,28 @@ const manualMemory = z
     '请选择与观众 UID 匹配的归档范围',
   );
 
+type ReplyTurns = Parameters<Parameters<ReturnType<typeof openWorkspace>['remind']>[3]>[0];
+
 export function createRouter(
   workspace: ReturnType<typeof openWorkspace>,
   browser: ReturnType<typeof createWorkspaceBrowser>,
 ) {
   const browserTools = createBrowserAgentTools({ webContents: browser.webContents });
-  const assistant = createLiveAssistant(workspace, browserTools);
+
+  const assistant = createLiveAssistant({
+    assistantConversation: platform => workspace.assistantConversation(platform)?.id,
+    isRunning: id => workspace.isRunning(id),
+    remind: (id, trigger, publish: (turns: ReplyTurns) => void) =>
+      workspace.remind(id, trigger, browserTools, publish),
+    settings: () => workspace.settings.assistant(),
+    viewerFacts: (platform, viewerId) =>
+      workspace.memory
+        .list(platform)
+        .filter(record => record.viewerId === viewerId)
+        .map(record => record.fact),
+    roomConnected: platform => workspace.rooms.status(platform)?.state === 'connected',
+    onMessage: listener => workspace.rooms.onMessage(listener),
+  });
 
   return {
     platforms: {

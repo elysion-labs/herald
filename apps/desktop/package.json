@@ -16,6 +16,7 @@
     "@herald/browser-tool": "workspace:*",
     "@herald/danmaku": "workspace:*",
     "@herald/live": "workspace:*",
+    "@herald/live-assistant": "workspace:*",
     "@herald/memory-tool": "workspace:*",
     "@orpc/client": "1.16.5",
     "@orpc/server": "1.16.5",

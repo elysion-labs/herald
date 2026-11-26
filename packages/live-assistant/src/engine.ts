@@ -2,15 +2,38 @@ import { EventEmitter, on } from 'node:events';
 
 import type { LivePlatform } from '@herald/live';
 
-import type { ReminderTrigger } from '../shared/assistant-settings.ts';
-import { platforms } from '../shared/platforms.ts';
-import type { LiveMessage } from './live-rooms.ts';
-import type { openWorkspace } from './workspace.ts';
+import type { AssistantSettings, ReminderTrigger } from './settings.ts';
 
-type Workspace = ReturnType<typeof openWorkspace>;
-type Turns = Parameters<Parameters<Workspace['remind']>[3]>[0];
+const platforms = ['bilibili', 'douyin'] as const satisfies readonly LivePlatform[];
 
-export type AssistantEvent =
+/** 调度需要的弹幕字段。 */
+export interface AssistantMessage {
+  platform: LivePlatform;
+  authorId: string | null;
+  authorName: string | null;
+  text: string;
+  receivedAt: number;
+}
+
+/** 宿主应用提供给调度器的能力；调度器本身不接触会话存储、记忆或直播连接。 */
+export interface AssistantHost<Turns> {
+  /** 该平台的助手会话 id。 */
+  assistantConversation: (platform: LivePlatform) => string | undefined;
+  isRunning: (conversationId: string) => boolean;
+  /** 让 agent 处理一次提醒；delivered=false 表示模型判断无需提醒。 */
+  remind: (
+    conversationId: string,
+    trigger: ReminderTrigger,
+    publish: (turns: Turns) => void,
+  ) => Promise<{ delivered: boolean }>;
+  settings: () => AssistantSettings;
+  /** 该观众在此平台已有的记忆内容。 */
+  viewerFacts: (platform: LivePlatform, viewerId: string) => string[];
+  roomConnected: (platform: LivePlatform) => boolean;
+  onMessage: (listener: (message: AssistantMessage) => void) => () => void;
+}
+
+export type AssistantEvent<Turns> =
   | { conversationId: string; phase: 'start'; trigger: ReminderTrigger }
   | { conversationId: string; phase: 'update'; turns: Turns }
   | { conversationId: string; phase: 'done'; delivered: boolean; error?: string };
@@ -35,11 +58,8 @@ const periodicMinimum = 3;
  * 弹幕自动提醒的调度：规则触发（冷场、有记忆的观众、关注词）与定时批量分析。
  * 只发给各平台的助手模式会话，受冷却时间限制；会话运行中时暂存最新一条，空闲后补发。
  */
-export function createLiveAssistant(
-  workspace: Workspace,
-  tools: Parameters<Workspace['remind']>[2],
-) {
-  const events = new EventEmitter<{ event: [AssistantEvent] }>();
+export function createLiveAssistant<Turns>(host: AssistantHost<Turns>) {
+  const events = new EventEmitter<{ event: [AssistantEvent<Turns>] }>();
   events.setMaxListeners(0);
 
   const states = new Map<LivePlatform, PlatformState>(
@@ -57,20 +77,20 @@ export function createLiveAssistant(
   );
 
   /** 提醒只发给该平台的助手会话。 */
-  const target = (platform: LivePlatform) => workspace.assistantConversation(platform)?.id;
+  const target = (platform: LivePlatform) => host.assistantConversation(platform);
 
   function fire(platform: LivePlatform, trigger: ReminderTrigger) {
     const state = states.get(platform);
     const conversationId = target(platform);
     const now = Date.now();
-    const { cooldownSeconds } = workspace.settings.assistant();
+    const { cooldownSeconds } = host.settings();
 
     if (!state || !conversationId || now - state.lastTriggerAt < cooldownSeconds * 1000) {
       return false;
     }
 
     // 会话正在回复时只保留最新一条，空闲后补发；冷场提醒过时就没有意义，直接丢弃。
-    if (workspace.isRunning(conversationId)) {
+    if (host.isRunning(conversationId)) {
       if (trigger.kind !== 'silence') {
         state.pending = trigger;
       }
@@ -83,8 +103,8 @@ export function createLiveAssistant(
     state.lastTriggerAt = now;
     events.emit('event', { conversationId, phase: 'start', trigger });
 
-    workspace
-      .remind(conversationId, trigger, tools, turns =>
+    host
+      .remind(conversationId, trigger, turns =>
         events.emit('event', { conversationId, phase: 'update', turns }),
       )
       .then(
@@ -101,7 +121,10 @@ export function createLiveAssistant(
     return true;
   }
 
-  function viewerTrigger(message: LiveMessage, state: PlatformState): ReminderTrigger | undefined {
+  function viewerTrigger(
+    message: AssistantMessage,
+    state: PlatformState,
+  ): ReminderTrigger | undefined {
     const viewerId = message.authorId;
     const last = viewerId ? state.viewerCooldown.get(viewerId) : undefined;
 
@@ -109,11 +132,7 @@ export function createLiveAssistant(
       return undefined;
     }
 
-    const facts = workspace.memory
-      .list(message.platform)
-      .filter(record => record.viewerId === viewerId)
-      .slice(0, 8)
-      .map(record => record.fact);
+    const facts = host.viewerFacts(message.platform, viewerId).slice(0, 8);
 
     if (!facts.length) {
       return undefined;
@@ -130,7 +149,7 @@ export function createLiveAssistant(
     };
   }
 
-  function onMessage(message: LiveMessage) {
+  function onMessage(message: AssistantMessage) {
     const state = states.get(message.platform);
 
     if (!state) {
@@ -145,7 +164,7 @@ export function createLiveAssistant(
       return;
     }
 
-    const config = workspace.settings.assistant();
+    const config = host.settings();
     const viewer = config.memoryViewers.enabled ? viewerTrigger(message, state) : undefined;
 
     if (viewer && fire(message.platform, viewer)) {
@@ -166,7 +185,7 @@ export function createLiveAssistant(
     }
   }
 
-  type Config = ReturnType<Workspace['settings']['assistant']>;
+  type Config = AssistantSettings;
 
   function checkSilence(platform: LivePlatform, state: PlatformState, config: Config, now: number) {
     const quiet = now - state.quietSince;
@@ -197,16 +216,16 @@ export function createLiveAssistant(
 
   function tick() {
     const now = Date.now();
-    const config = workspace.settings.assistant();
+    const config = host.settings();
 
     for (const [platform, state] of states) {
       const conversationId = target(platform);
 
-      if (!conversationId || workspace.rooms.status(platform)?.state !== 'connected') {
+      if (!conversationId || !host.roomConnected(platform)) {
         continue;
       }
 
-      if (state.pending && !workspace.isRunning(conversationId)) {
+      if (state.pending && !host.isRunning(conversationId)) {
         fire(platform, state.pending);
         continue;
       }
@@ -216,7 +235,7 @@ export function createLiveAssistant(
     }
   }
 
-  const unsubscribe = workspace.rooms.onMessage(onMessage);
+  const unsubscribe = host.onMessage(onMessage);
   const timer = setInterval(tick, tickInterval);
 
   return {
@@ -224,7 +243,7 @@ export function createLiveAssistant(
       const updates = on(events, 'event', { signal });
 
       try {
-        for await (const [event] of updates as AsyncIterableIterator<[AssistantEvent]>) {
+        for await (const [event] of updates as AsyncIterableIterator<[AssistantEvent<Turns>]>) {
           yield event;
         }
       } finally {
