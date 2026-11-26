@@ -1,10 +1,36 @@
-# Herald
+<h1 align="center">Herald</h1>
 
-Herald 是一个 Electron 直播助手。工作台包含平台会话、Pi 聊天和嵌入式网页预览。
+<p align="center">陪主播一起看弹幕的桌面助手：记住观众、盯住冷场、在合适的时候递上一句话。</p>
 
-## 本地开发
+<p align="center">
+  <a href="#quick-start">快速开始</a> ·
+  <a href="#modes">两种会话</a> ·
+  <a href="#assistant">直播助手</a> ·
+  <a href="#data">数据与目录</a> ·
+  <a href="#extend">扩展 Herald</a>
+</p>
 
-首次开发需要 Git、Node.js 24+ 和 Vite+。Setup 会将 `blive-ws` 和 `dylive-ws` 的固定版本克隆到 `vendor/`，按各自的锁文件安装并构建。Herald 通过 pnpm 本地链接使用它们。已有克隆可以重复运行 setup。
+直播时，主播没有余力一边说话一边翻弹幕、记住每个老观众、留意冷场。Herald 连接 B 站和抖音直播间，把弹幕存下来交给 [Pi](https://github.com/earendil-works/pi) agent。你可以随时向它提问，也可以让它在冷场、熟悉的观众出现或弹幕提到关注词时，主动给出建议。
+
+> [!NOTE]
+> Herald 仍在早期开发中，没有发布版本。数据库结构变化时不做旧数据迁移。
+
+## 现在可以做什么？
+
+- 💬 **和 agent 对话** — 流式 Markdown 回复，支持图片和文本附件，按供应商分组选择模型与思考等级。
+- 📺 **连接直播间** — 每个平台绑定一个直播间，实时弹幕可以浮在聊天右上角查看。
+- 🗄️ **保存弹幕** — 弹幕写入 SQLite 并保留 30 天，agent 用 `query_danmaku` 按时间、观众和关键词查询，或统计发言排行与弹幕量。
+- 🎙️ **主播助手模式** — 只有助手会话会注入新弹幕并接收提醒，普通聊天保持干净。
+- 🔔 **主动提醒** — 冷场、有记忆的观众发言、命中关注词和定时分析，都可以单独开关；模型认为没必要时不会留下记录。
+- 🧠 **记住观众** — 观众记忆以 Markdown 保存，记录时要引用弹幕原文或主播的话作为证据。
+- 🌐 **内置浏览器** — agent 可以打开、读取、截图、点击和滚动网页，主播在预览面板里能看到它的操作。
+- 🧩 **复用 Pi 生态** — skills、extensions、MCP 服务器与 Pi 的配置文件放进资源目录即可生效。
+
+<a id="quick-start"></a>
+
+## 快速开始
+
+需要 Git、Node.js 24+ 和 [Vite+](https://viteplus.dev/)。首次运行会把 `blive-ws` 和 `dylive-ws` 的固定版本克隆到 `vendor/`，按各自的锁文件安装并构建，Herald 通过 pnpm 本地链接使用它们。
 
 ```sh
 vpx ./scripts/setup-vendor.ts
@@ -12,18 +38,93 @@ vp install
 vp run dev
 ```
 
-首次安装后也可以用 `vp run setup` 重新构建这两个依赖。更新上游版本时修改 `scripts/setup-vendor.ts` 中的提交号，再运行 setup。
+打开应用后：
 
-运行 `vp run ready` 检查格式、类型、测试和桌面构建。运行 `vp run build` 单独构建桌面应用。
+1. 在 **设置 › 直播与模型** 登录平台账号，绑定直播间，并配置一个模型供应商。
+2. 点击侧栏「会话」旁的加号，选择 **主播助手** 下的平台，新建一个助手会话。
+3. 点击顶栏的弹幕按钮打开实时弹幕面板。提醒会同时出现在面板和助手会话里。
+
+已有的克隆可以重复运行 setup，也可以用 `vp run setup` 重新构建这两个依赖。更新上游版本时，修改 `scripts/setup-vendor.ts` 中的提交号，再运行 setup。
+
+<a id="modes"></a>
+
+## 两种会话
+
+|                  | 普通会话 | 主播助手会话                         |
+| ---------------- | -------- | ------------------------------------ |
+| 每轮自动带上弹幕 | 不带     | 只带上次之后的新弹幕，最多 30 条     |
+| `query_danmaku`  | 可用     | 可用                                 |
+| 主动提醒         | 不触发   | 触发                                 |
+| 每个平台的数量   | 不限     | 最多一个，开启新的时旧的自动退回普通 |
+
+助手会话每轮只追加新弹幕，不改写历史，所以模型的提示缓存可以持续命中。超出 30 条时会注明还有多少条没有展示，agent 需要时再用工具查询。
+
+在会话顶栏点击 <kbd>Radio</kbd> 图标可以切换模式。
+
+<a id="assistant"></a>
+
+## 直播助手
+
+提醒只发给当前平台的助手会话，并受「提醒间隔」限制，避免频繁打扰。助手会话正在回复时，最新一条提醒会等它结束后再发；冷场提醒过时就没有意义，直接丢弃。
+
+| 规则         | 触发条件                                       | 默认         |
+| ------------ | ---------------------------------------------- | ------------ |
+| 冷场提醒     | 直播间连续 N 秒没有新弹幕                      | 开启，120 秒 |
+| 记忆观众发言 | 有记忆的观众发弹幕，同一观众 10 分钟最多一次   | 开启         |
+| 关注词       | 弹幕包含设置里的词语                           | 关闭         |
+| 定时分析     | 每 N 分钟总结一次，期间至少有 3 条新弹幕才分析 | 关闭，5 分钟 |
+
+每次提醒都会把触发原因和新弹幕交给 agent。如果模型回复 `SKIP`，Herald 会把会话分支退回提醒之前，聊天记录和模型上下文里都不会留下这一次。所有规则都在 **设置 › 直播助手** 中调整。
+
+<a id="data"></a>
+
+## 数据与目录
+
+Herald 的数据都在 Electron 的 `userData` 目录下：
+
+| 路径                       | 内容                                                                    |
+| -------------------------- | ----------------------------------------------------------------------- |
+| `herald.sqlite`            | 会话索引、直播间绑定、模型配置、应用设置和弹幕，结构由 drizzle 迁移管理 |
+| `sessions/<平台>/`         | Pi 会话 JSONL，会话标题也以这里的记录为准                               |
+| `memory/shared`            | 全局记忆，两个平台的会话都能检索                                        |
+| `memory/<平台>/`           | 观众记忆 Markdown，可在侧栏「记忆」中按分组查看                         |
+| `agent/`                   | Pi 资源目录，见下一节                                                   |
+| `auth.json`、`models.json` | Pi 的凭证与模型文件                                                     |
+
+设置里保存的 API Key 用系统密钥加密后存入数据库。平台登录和内置浏览器共用持久化的 Electron Session。
+
+<a id="extend"></a>
+
+## 扩展 Herald
+
+`agent/` 的结构与 `~/.pi/agent` 相同，放入以下内容后，从下一条消息开始生效：
+
+- `skills/` — Pi skills，会和 Herald 自带的 skills 一起列在系统提示词中。
+- `extensions/` — Pi extensions。
+- `mcp.json` — MCP 服务器，格式与其他 MCP 客户端一致。
+- `settings.json`、`APPEND_SYSTEM.md` — Pi 设置和附加系统提示。
+
+为了和本机命令行里的 Pi 隔离，Herald 不读取 `~/.pi/agent` 和 `~/.agents/skills`。在 **设置 › Agent 能力** 中可以打开这个目录。
+
+Pi 内置的写入、编辑和执行命令工具默认关闭，可以在同一页单独开启。Herald 的角色提示词可以在 **设置 › 系统提示词** 中修改或恢复默认。
 
 ## 工作区
 
-- `apps/desktop` 管理 Electron 窗口、网页预览、平台登录分区和 oRPC 接口。React 工作台由 shadcn/ui、TanStack Router 和 Query 驱动。
-- `packages/agent` 管理 Pi 会话并组装 Agent 工具。
-- `packages/browser-tool`、`packages/history-tool` 和 `packages/skill-tool` 按能力独立提供工具。浏览器工具支持新开、切换、读取、截图、点击、滚动和关闭。点击和滚动使用相对于截图的坐标。预览页的 Agent 光标默认居中，点击时定位到目标位置。
-- `packages/live` 把本地 B 站和抖音客户端接入统一的弹幕适配器。
-- `packages/memory-tool` 按平台保存观众记忆 Markdown，并通过 QMD 提供关键词查找和 Agent 工具。
+| 目录                    | 职责                                                           |
+| ----------------------- | -------------------------------------------------------------- |
+| `apps/desktop`          | Electron 主进程、oRPC 接口、数据库与 React 工作台（shadcn/ui） |
+| `packages/agent`        | 组装 Pi 会话：资源发现、MCP、内置工具开关、会话标题工具        |
+| `packages/live`         | 把本地的 B 站和抖音客户端接入统一的弹幕适配器                  |
+| `packages/memory-tool`  | 按平台保存观众记忆，通过 QMD 提供检索与 agent 工具             |
+| `packages/browser-tool` | 内置浏览器的 agent 工具，点击和滚动使用相对于截图的坐标        |
+| `packages/history-tool` | 检索历史会话                                                   |
+| `packages/skill-tool`   | Herald 自带的 skills，以及多个 `/skill:` 命令的展开            |
 
-桌面应用在 Electron 的 `userData` 下写入会话索引与模型配置。Agent 目录为 `agent/`，对话由 Pi 按平台保存到 `sessions/<平台>/`，格式为 JSONL。设置里的 API Key 使用系统密钥加密，模型运行时也支持 Pi 的 `auth.json`、`models.json` 和环境变量。观众记忆保存在 `memory/<平台>`，可在侧栏打开并查看原始 Markdown。
+## 开发
 
-平台登录和主页浏览器共用持久化的 Electron Session。在设置里为每个平台绑定一个直播间，同平台的会话都使用对应的直播间。主播发送消息时，Herald 把当前房间最近的弹幕作为参考上下文交给 Pi。通用记忆存放在 `memory/shared`，两个平台的会话都可检索。
+```sh
+vp check            # 格式、lint 与类型检查
+vp run ready        # 检查、测试并构建桌面应用
+vp run build        # 只构建桌面应用
+vp run desktop#db:generate   # 修改 schema 后生成 drizzle 迁移
+```
