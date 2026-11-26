@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
+import { useState } from 'react';
 
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 
 import { rpc } from './rpc.ts';
 
@@ -99,26 +100,34 @@ function UsageDetails({ usage }: { usage?: Usage }) {
 export function ContextUsage({ id }: { id: string }) {
   const { data } = useQuery({ queryKey: usageKey(id), queryFn: () => rpc.conversations.usage(id) });
   const ratio = usageRatio(data);
+  const [open, setOpen] = useState(false);
 
+  // 悬停打开、点击也可切换；卡片与其他弹出层同一套样式。
   return (
-    <TooltipProvider delayDuration={150}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <button
-            type="button"
-            className="text-muted-foreground hover:bg-muted grid size-7 place-items-center rounded-full transition-colors"
-            aria-label={`上下文已使用 ${Math.round(ratio * 100)}%`}
-          >
-            <Ring ratio={ratio} />
-          </button>
-        </TooltipTrigger>
-        <TooltipContent side="top" align="end" className="w-64 p-3 text-xs">
-          <div className="grid gap-2">
-            <p className="text-sm font-medium">上下文窗口</p>
-            <UsageDetails usage={data} />
-          </div>
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="text-muted-foreground hover:bg-muted grid size-7 place-items-center rounded-full transition-colors"
+          aria-label={`上下文已使用 ${Math.round(ratio * 100)}%`}
+          onPointerEnter={() => setOpen(true)}
+          onPointerLeave={() => setOpen(false)}
+        >
+          <Ring ratio={ratio} />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        side="top"
+        align="end"
+        sideOffset={8}
+        className="pointer-events-none w-72 p-4 text-xs"
+        onOpenAutoFocus={event => event.preventDefault()}
+      >
+        <div className="grid gap-3">
+          <p className="text-sm font-medium">上下文窗口</p>
+          <UsageDetails usage={data} />
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }
