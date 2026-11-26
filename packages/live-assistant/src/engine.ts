@@ -102,26 +102,30 @@ export function createLiveAssistant<Turns>(host: AssistantHost<Turns>) {
     }
 
     state.pending = undefined;
-
     state.lastTriggerAt = now;
-    events.emit('event', { conversationId, phase: 'start', trigger });
-
-    host
-      .remind(conversationId, trigger, turns =>
-        events.emit('event', { conversationId, phase: 'update', turns }),
-      )
-      .then(
-        ({ delivered }) => events.emit('event', { conversationId, phase: 'done', delivered }),
-        (error: unknown) =>
-          events.emit('event', {
-            conversationId,
-            phase: 'done',
-            delivered: false,
-            error: error instanceof Error ? error.message : '提醒失败',
-          }),
-      );
+    void deliver(conversationId, trigger);
 
     return true;
+  }
+
+  /** 交给 agent 处理一次提醒，并把开始、过程与结果广播给界面。 */
+  async function deliver(conversationId: string, trigger: ReminderTrigger) {
+    events.emit('event', { conversationId, phase: 'start', trigger });
+
+    try {
+      const { delivered } = await host.remind(conversationId, trigger, turns =>
+        events.emit('event', { conversationId, phase: 'update', turns }),
+      );
+
+      events.emit('event', { conversationId, phase: 'done', delivered });
+    } catch (error) {
+      events.emit('event', {
+        conversationId,
+        phase: 'done',
+        delivered: false,
+        error: error instanceof Error ? error.message : '提醒失败',
+      });
+    }
   }
 
   function viewerTrigger(
@@ -258,6 +262,21 @@ export function createLiveAssistant<Turns>(host: AssistantHost<Turns>) {
   const timer = setInterval(tick, tickInterval);
 
   return {
+    /**
+     * 立即在指定会话处理一次提醒（开播推荐、下播复盘），不受冷却限制；
+     * 会话正在回复时等它空闲（最多 2 分钟）。返回时这次提醒已经处理完。
+     */
+    async run(conversationId: string, trigger: ReminderTrigger) {
+      const deadline = Date.now() + 2 * 60_000;
+
+      while (host.isRunning(conversationId) && Date.now() < deadline) {
+        await new Promise(resolve => {
+          setTimeout(resolve, 1000);
+        });
+      }
+
+      await deliver(conversationId, trigger);
+    },
     async *watch(signal?: AbortSignal) {
       const updates = on(events, 'event', { signal });
 

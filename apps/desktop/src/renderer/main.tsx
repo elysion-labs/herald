@@ -302,6 +302,7 @@ function Sidebar() {
                   to="/chat/$id"
                   params={{ id: item.id }}
                 >
+                  {item.platform && <PlatformIcon platform={item.platform} />}
                   <span className="min-w-0 flex-1 truncate">{item.title}</span>
                   <time className="session-time" dateTime={new Date(item.createdAt).toISOString()}>
                     {shortTime(item.createdAt)}

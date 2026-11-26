@@ -19,6 +19,8 @@ export const conversations = sqliteTable(
       .default('chat'),
     /** 助手模式已注入到上下文的最后一条弹幕时间。 */
     danmakuCursor: integer('danmaku_cursor').notNull().default(0),
+    /** 直播场次的开播时间；助手会话开播后写入，下播后该会话转为普通会话并保留这个时间。 */
+    liveStartedAt: integer('live_started_at'),
   },
   table => [
     uniqueIndex('conversations_assistant_platform')

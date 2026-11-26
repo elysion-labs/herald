@@ -71,8 +71,27 @@ export function openLiveRooms(db: Database) {
     db.delete(table).where(eq(table.platform, platform)).run();
 
   const connections = new Map<LivePlatform, RoomConnection>();
+
   /** 去重后的新弹幕广播：实时弹幕浮窗与自动提醒都订阅它。 */
-  const events = new EventEmitter<{ message: [LiveMessage] }>();
+  const events = new EventEmitter<{
+    message: [LiveMessage];
+    live: [LivePlatform, 'live' | 'offline'];
+  }>();
+
+  /** 更新在播状态；确定的状态发生变化时广播开播 / 下播。 */
+  function setLive(platform: LivePlatform, connection: RoomConnection, live: LiveStatus) {
+    if (live === 'unknown' || live === connection.live) {
+      return;
+    }
+
+    const previous = connection.live;
+    connection.live = live;
+
+    if (connections.get(platform) === connection && (previous !== 'unknown' || live === 'live')) {
+      events.emit('live', platform, live);
+    }
+  }
+
   events.setMaxListeners(0);
 
   function stop(platform: LivePlatform) {
@@ -121,8 +140,8 @@ export function openLiveRooms(db: Database) {
         () => 'unknown' as const,
       );
 
-      if (!signal.aborted && live !== 'unknown') {
-        connection.live = live;
+      if (!signal.aborted) {
+        setLive(platform, connection, live);
       }
     };
 
@@ -138,7 +157,7 @@ export function openLiveRooms(db: Database) {
           connection.error = explainFailure(error);
         },
         onLiveStatus(live) {
-          connection.live = live;
+          setLive(platform, connection, live);
         },
         onMessage(message) {
           if (connections.get(platform) !== connection) {
@@ -166,6 +185,12 @@ export function openLiveRooms(db: Database) {
   return {
     status,
     connect,
+    /** 开播 / 下播事件；首次确认在播也算开播（例如打开应用时已在直播）。 */
+    onLiveChange(listener: (platform: LivePlatform, live: 'live' | 'offline') => void) {
+      events.on('live', listener);
+
+      return () => events.off('live', listener);
+    },
     onMessage(listener: (message: LiveMessage) => void) {
       events.on('message', listener);
 

@@ -15,6 +15,10 @@ export const assistantSettings = z.object({
   memoryViewers: z.object({ enabled, cooldownMinutes: viewerCooldownMinutes }),
   keywords: z.object({ enabled, words: keywordList }),
   periodic: z.object({ enabled, minutes: periodicMinutes, minMessages: periodicMinMessages }),
+  /** 开播时推荐本场话题。 */
+  liveStart: z.object({ enabled }).default({ enabled: true }),
+  /** 下播后自动复盘。 */
+  liveEnd: z.object({ enabled }).default({ enabled: true }),
   /** 两次提醒之间的最短间隔。 */
   cooldownSeconds: z.number().int().min(15).max(3600),
 });
@@ -26,6 +30,8 @@ export const defaultAssistantSettings: AssistantSettings = {
   memoryViewers: { enabled: true, cooldownMinutes: 10 },
   keywords: { enabled: false, words: [] },
   periodic: { enabled: false, minutes: 5, minMessages: 3 },
+  liveStart: { enabled: true },
+  liveEnd: { enabled: true },
   cooldownSeconds: 60,
 };
 
@@ -45,7 +51,22 @@ export const reminderTrigger = z.discriminatedUnion('kind', [
     text: z.string(),
   }),
   z.object({ kind: z.literal('periodic'), minutes: z.number(), count: z.number() }),
+  z.object({ kind: z.literal('liveStart'), startedAt: z.number() }),
+  z.object({ kind: z.literal('liveEnd'), startedAt: z.number(), endedAt: z.number() }),
 ]);
+
+/** 开播推荐与下播复盘必须给出结果，不能回复 SKIP。 */
+export function isLifecycleTrigger(trigger: ReminderTrigger) {
+  return trigger.kind === 'liveStart' || trigger.kind === 'liveEnd';
+}
+
+/** 直播场次的显示时间，例如 11-25 20:03。 */
+export function liveTime(timestamp: number) {
+  const date = new Date(timestamp);
+  const pad = (value: number) => String(value).padStart(2, '0');
+
+  return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
 
 export type ReminderTrigger = z.infer<typeof reminderTrigger>;
 
@@ -66,6 +87,14 @@ export function describeTrigger(trigger: ReminderTrigger) {
 
     case 'periodic': {
       return `近 ${trigger.minutes} 分钟 ${trigger.count} 条弹幕`;
+    }
+
+    case 'liveStart': {
+      return `${liveTime(trigger.startedAt)} 开播`;
+    }
+
+    case 'liveEnd': {
+      return `${liveTime(trigger.startedAt)} 至 ${liveTime(trigger.endedAt)}`;
     }
   }
 }

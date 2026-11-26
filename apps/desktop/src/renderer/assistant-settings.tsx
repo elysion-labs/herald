@@ -104,7 +104,7 @@ export function AssistantSettingsPanel() {
     );
   }
 
-  const { silence, memoryViewers, keywords, periodic } = settings;
+  const { silence, memoryViewers, keywords, periodic, liveStart, liveEnd } = settings;
 
   return (
     <Card>
@@ -115,6 +115,20 @@ export function AssistantSettingsPanel() {
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-5">
+        <RuleRow
+          id="rule-live-start"
+          label="开播话题推荐"
+          description="开播时结合记忆、历史场次和平台热门，推荐本场可以聊的话题"
+          checked={liveStart.enabled}
+          onCheckedChange={enabled => save.mutate({ liveStart: { enabled } })}
+        />
+        <RuleRow
+          id="rule-live-end"
+          label="下播复盘"
+          description="下播后总结本场弹幕走势、活跃观众和亮点，并给下一场建议；之后本场转为普通会话"
+          checked={liveEnd.enabled}
+          onCheckedChange={enabled => save.mutate({ liveEnd: { enabled } })}
+        />
         <RuleRow
           id="rule-silence"
           label="冷场提醒"

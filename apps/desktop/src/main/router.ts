@@ -17,6 +17,7 @@ import {
 } from '../shared/model-settings.ts';
 import { platforms } from '../shared/platforms.ts';
 import type { createWorkspaceBrowser } from './browser.ts';
+import { createLiveSessions } from './live-sessions.ts';
 import { getPlatformAccount } from './platform-accounts.ts';
 import type { openWorkspace } from './workspace.ts';
 
@@ -63,6 +64,8 @@ export function createRouter(
     onMessage: listener => workspace.rooms.onMessage(listener),
   });
 
+  const liveSessions = createLiveSessions(workspace, assistant);
+
   return {
     platforms: {
       account: os.input(platform).handler(({ input, signal }) => getPlatformAccount(input, signal)),
@@ -79,7 +82,17 @@ export function createRouter(
       }),
       setBinding: os
         .input(z.object({ platform, room: z.string().trim().min(1).max(512).nullable() }))
-        .handler(({ input }) => workspace.rooms.setBinding(input.platform, input.room)),
+        .handler(({ input }) => {
+          // 换绑到另一个直播间时，结束当前场次（会先复盘）。
+          const previous = workspace.rooms.status(input.platform)?.roomId;
+          const room = workspace.rooms.setBinding(input.platform, input.room);
+
+          if (previous && previous !== room?.roomId) {
+            void liveSessions.end(input.platform);
+          }
+
+          return room;
+        }),
     },
     memory: {
       list: os.input(memoryScope).handler(({ input }) => workspace.memory.list(input)),

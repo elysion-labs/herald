@@ -1,0 +1,1 @@
+ALTER TABLE `conversations` ADD `live_started_at` integer;

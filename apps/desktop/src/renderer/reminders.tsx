@@ -23,6 +23,8 @@ const triggerLabels: Record<ReminderTrigger['kind'], string> = {
   viewer: '观众提醒',
   keyword: '关注词提醒',
   periodic: '弹幕分析',
+  liveStart: '开播话题',
+  liveEnd: '下播复盘',
 };
 
 /**

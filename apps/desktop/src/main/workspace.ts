@@ -6,7 +6,7 @@ import { createLiveAgent, createSessionStore } from '@herald/agent';
 import { createDanmakuTool, freshDanmaku, openDanmakuStore } from '@herald/danmaku';
 import type { LivePlatform } from '@herald/live';
 import { reminderPrompt } from '@herald/live-assistant';
-import { reminderTrigger } from '@herald/live-assistant/settings';
+import { liveTime, reminderTrigger } from '@herald/live-assistant/settings';
 import type { ReminderTrigger } from '@herald/live-assistant/settings';
 import { createMemoryAgentTools, openMemoryLibrary } from '@herald/memory-tool';
 import { ORPCError } from '@orpc/server';
@@ -27,6 +27,12 @@ import { openLiveRooms } from './live-rooms.ts';
 import { openModelSettings } from './model-settings.ts';
 
 type Conversation = typeof schema.conversations.$inferSelect;
+
+/** 只有普通会话可以自动命名；助手会话和已结束的直播场次标题固定。 */
+function canRename(conversation: Conversation) {
+  return conversation.mode === 'chat' && !conversation.liveStartedAt;
+}
+
 type AgentTools = Parameters<typeof createLiveAgent>[0]['tools'];
 
 const reminderType = 'herald-reminder';
@@ -257,6 +263,43 @@ export function openWorkspace(directory: string) {
     }
   }
 
+  /** 开播：当前助手会话成为本场会话（开播前的准备内容随之保留）。 */
+  function beginLiveSession(platform: LivePlatform) {
+    ensureAssistants();
+    const current = assistantConversation(platform);
+
+    if (current && !current.liveStartedAt) {
+      const now = Date.now();
+
+      db.update(conversations)
+        .set({ liveStartedAt: now, danmakuCursor: now - assistantLookback })
+        .where(eq(conversations.id, current.id))
+        .run();
+    }
+
+    return assistantConversation(platform);
+  }
+
+  /** 下播：本场会话转为普通会话，标题改为开播时间；再补上下一场的助手会话。 */
+  function endLiveSession(platform: LivePlatform) {
+    const current = assistantConversation(platform);
+
+    if (!current?.liveStartedAt) {
+      return undefined;
+    }
+
+    const title = `${liveTime(current.liveStartedAt)} 直播`;
+
+    db.update(conversations)
+      .set({ mode: 'chat', title })
+      .where(eq(conversations.id, current.id))
+      .run();
+    createSessionStore(directory, platform).open(current.id)?.appendSessionInfo(title);
+    ensureAssistants();
+
+    return getConversation(current.id);
+  }
+
   function assistantConversation(platform: LivePlatform) {
     return db
       .select()
@@ -345,7 +388,7 @@ export function openWorkspace(directory: string) {
       model,
       thinking,
       tools: [...(tools ?? []), ...memoryTools, createDanmakuTool(danmaku, conversation.platform)],
-      onTitle: conversation.mode === 'chat' ? title => rename(title, conversation.id) : undefined,
+      onTitle: canRename(conversation) ? title => rename(title, conversation.id) : undefined,
       // 普通会话可以跨平台读取历史会话。
       historyScopes: conversation.platform ? [] : platforms,
       systemPrompt: settings.agent().systemPrompt,
@@ -376,6 +419,8 @@ export function openWorkspace(directory: string) {
     },
     /** 该平台固定的助手会话。 */
     assistantConversation,
+    beginLiveSession,
+    endLiveSession,
     list: () =>
       db
         .select()
@@ -388,12 +433,13 @@ export function openWorkspace(directory: string) {
       return models.saveChoice(id, choice);
     },
     history(id: string) {
-      const { platform, title, mode } = getConversation(id);
+      const conversation = getConversation(id);
+      const { platform, title } = conversation;
       const session = createSessionStore(directory, platform ?? 'chat').open(id);
       const name = session?.getSessionName();
 
       // 标题以 session jsonl 为准，列表索引不一致时以它恢复。
-      if (mode === 'chat' && name && name !== title) {
+      if (canRename(conversation) && name && name !== title) {
         rename(name, id);
       }
 
@@ -484,7 +530,7 @@ export function openWorkspace(directory: string) {
           assertReply(session.messages.at(-1));
 
           // agent 没有调用 set_session_title 时，用首条消息兜底，同样写入 jsonl。
-          if (conversation.mode === 'chat' && !session.sessionName) {
+          if (canRename(conversation) && !session.sessionName) {
             const title = fallbackTitle(text, attachments);
 
             session.setSessionName(title);
