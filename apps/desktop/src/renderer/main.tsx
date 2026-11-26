@@ -94,6 +94,7 @@ import { AttachmentChip, ChatComposer } from './chat-composer.tsx';
 import type { ComposerMessage } from './chat-composer.tsx';
 import { ChatMarkdown } from './chat-markdown.tsx';
 import { chatModelKey } from './chat-model-controls.tsx';
+import { usageKey } from './context-usage.tsx';
 import { DanmakuPanel } from './danmaku-panel.tsx';
 import { kubaiMixed } from './kubai-colors.ts';
 import { roomSummary, statusLabels, StatusDot, useRoom } from './live-status.tsx';
@@ -994,6 +995,7 @@ function ChatSession({ id }: { id: string }) {
     () =>
       Promise.all([
         queryClient.invalidateQueries({ queryKey: ['history', id] }),
+        queryClient.invalidateQueries({ queryKey: usageKey(id) }),
         queryClient.invalidateQueries(conversationsQuery),
       ]),
     [id, queryClient],
@@ -1016,6 +1018,7 @@ function ChatSession({ id }: { id: string }) {
     async onSettled() {
       await Promise.all([
         queryClient.invalidateQueries(historyQuery),
+        queryClient.invalidateQueries({ queryKey: usageKey(id) }),
         queryClient.invalidateQueries(conversationsQuery),
       ]);
     },

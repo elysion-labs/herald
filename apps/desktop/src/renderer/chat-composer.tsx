@@ -18,6 +18,7 @@ import {
 } from '../shared/attachments.ts';
 import type { Attachment } from '../shared/attachments.ts';
 import { ChatModelControls } from './chat-model-controls.tsx';
+import { ContextUsage } from './context-usage.tsx';
 
 export interface ComposerMessage {
   text: string;
@@ -237,6 +238,7 @@ export function ChatComposer({
           <span className="text-muted-foreground/60 ml-auto px-1 text-[11px] select-none max-sm:hidden">
             Enter 发送 · Shift + Enter 换行
           </span>
+          <ContextUsage id={id} />
           <InputGroupButton
             type="submit"
             variant="default"

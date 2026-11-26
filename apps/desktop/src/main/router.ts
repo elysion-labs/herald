@@ -144,6 +144,7 @@ export function createRouter(
       list: os.handler(() => workspace.list()),
       create: os.handler(() => workspace.create()),
       history: os.input(z.uuid()).handler(({ input }) => workspace.history(input)),
+      usage: os.input(z.uuid()).handler(({ input }) => workspace.usage(input)),
       send: os
         .input(
           z

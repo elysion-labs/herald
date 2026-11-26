@@ -427,6 +427,36 @@ export function openWorkspace(directory: string) {
         .from(conversations)
         .orderBy(desc(conversations.createdAt), desc(conversations.id))
         .all(),
+    /**
+     * 上下文占用与累计用量：上下文按最近一条回复的输入（含缓存）加输出估算，
+     * 窗口取当前模型；累计 token 与费用汇总活动分支上的全部回复。
+     */
+    async usage(id: string) {
+      const conversation = getConversation(id);
+      const session = createSessionStore(directory, conversation.platform ?? 'chat').open(id);
+
+      const replies = (session?.getBranch() ?? []).flatMap(entry =>
+        entry.type === 'message' && entry.message.role === 'assistant' ? [entry.message.usage] : [],
+      );
+
+      const totals = { input: 0, output: 0, cost: 0 };
+
+      for (const usage of replies) {
+        totals.input += usage.input + usage.cacheRead + usage.cacheWrite;
+        totals.output += usage.output;
+        totals.cost += usage.cost.total;
+      }
+
+      const last = replies.at(-1);
+      const { model } = await models.current(id).catch(() => ({ model: undefined }));
+
+      return {
+        ...totals,
+        contextTokens: last ? last.input + last.cacheRead + last.cacheWrite + last.output : 0,
+        contextWindow: model?.contextWindow ?? null,
+        model: model ? { provider: model.provider, name: model.name } : null,
+      };
+    },
     setModelChoice(id: string, choice: ChatModelChoice) {
       getConversation(id);
 
