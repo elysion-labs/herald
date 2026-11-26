@@ -59,6 +59,7 @@ export function createRouter(
         .filter(record => record.viewerId === viewerId)
         .map(record => record.fact),
     roomConnected: platform => workspace.rooms.status(platform)?.state === 'connected',
+    roomLive: platform => workspace.rooms.status(platform)?.live ?? 'unknown',
     onMessage: listener => workspace.rooms.onMessage(listener),
   });
 

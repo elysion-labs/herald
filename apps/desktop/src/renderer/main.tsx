@@ -390,7 +390,11 @@ function AssistantItem({
 }) {
   const { data } = useRoom(platform);
   const selected = Boolean(conversation) && conversation?.id === current;
-  const detail = data ? `${data.roomId} · ${statusLabels[data.state]}` : '未绑定直播间';
+  const liveLabels = { live: ' · 直播中', offline: ' · 未开播', unknown: '' };
+
+  const detail = data
+    ? `${data.roomId} · ${statusLabels[data.state]}${liveLabels[data.live]}`
+    : '未绑定直播间';
 
   const body = (
     <>

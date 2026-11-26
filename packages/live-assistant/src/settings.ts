@@ -3,15 +3,18 @@ import { z } from 'zod';
 const enabled = z.boolean();
 const silenceSeconds = z.number().int().min(30).max(1800);
 const periodicMinutes = z.number().int().min(1).max(60);
+/** 新增字段带默认值，旧版本保存的设置仍能解析。 */
+const viewerCooldownMinutes = z.number().int().min(1).max(240).default(10);
+const periodicMinMessages = z.number().int().min(1).max(500).default(3);
 const keyword = z.string().trim().min(1).max(32);
 const keywordList = z.array(keyword).max(50);
 
 /** 弹幕自动提醒：规则触发（冷场 / 有记忆的观众 / 关注词）+ 定时批量分析。 */
 export const assistantSettings = z.object({
   silence: z.object({ enabled, seconds: silenceSeconds }),
-  memoryViewers: z.object({ enabled }),
+  memoryViewers: z.object({ enabled, cooldownMinutes: viewerCooldownMinutes }),
   keywords: z.object({ enabled, words: keywordList }),
-  periodic: z.object({ enabled, minutes: periodicMinutes }),
+  periodic: z.object({ enabled, minutes: periodicMinutes, minMessages: periodicMinMessages }),
   /** 两次提醒之间的最短间隔。 */
   cooldownSeconds: z.number().int().min(15).max(3600),
 });
@@ -20,9 +23,9 @@ export type AssistantSettings = z.infer<typeof assistantSettings>;
 
 export const defaultAssistantSettings: AssistantSettings = {
   silence: { enabled: true, seconds: 120 },
-  memoryViewers: { enabled: true },
+  memoryViewers: { enabled: true, cooldownMinutes: 10 },
   keywords: { enabled: false, words: [] },
-  periodic: { enabled: false, minutes: 5 },
+  periodic: { enabled: false, minutes: 5, minMessages: 3 },
   cooldownSeconds: 60,
 };
 

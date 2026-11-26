@@ -30,6 +30,8 @@ export interface AssistantHost<Turns> {
   /** 该观众在此平台已有的记忆内容。 */
   viewerFacts: (platform: LivePlatform, viewerId: string) => string[];
   roomConnected: (platform: LivePlatform) => boolean;
+  /** 直播间是否在播；冷场提醒只在确认直播中时触发。 */
+  roomLive: (platform: LivePlatform) => 'live' | 'offline' | 'unknown';
   onMessage: (listener: (message: AssistantMessage) => void) => () => void;
 }
 
@@ -48,11 +50,11 @@ interface PlatformState {
   lastPeriodicAt: number;
   sincePeriodic: number;
   viewerCooldown: Map<string, number>;
+  /** 上一次检查时是否在播，用于开播时重置冷场计时。 */
+  live: boolean;
 }
 
 const tickInterval = 5000;
-const viewerCooldown = 10 * 60 * 1000;
-const periodicMinimum = 3;
 
 /**
  * 弹幕自动提醒的调度：规则触发（冷场、有记忆的观众、关注词）与定时批量分析。
@@ -72,6 +74,7 @@ export function createLiveAssistant<Turns>(host: AssistantHost<Turns>) {
         lastPeriodicAt: Date.now(),
         sincePeriodic: 0,
         viewerCooldown: new Map(),
+        live: false,
       },
     ]),
   );
@@ -128,7 +131,9 @@ export function createLiveAssistant<Turns>(host: AssistantHost<Turns>) {
     const viewerId = message.authorId;
     const last = viewerId ? state.viewerCooldown.get(viewerId) : undefined;
 
-    if (!viewerId || (last && Date.now() - last < viewerCooldown)) {
+    const cooldown = host.settings().memoryViewers.cooldownMinutes * 60_000;
+
+    if (!viewerId || (last && Date.now() - last < cooldown)) {
       return undefined;
     }
 
@@ -187,10 +192,24 @@ export function createLiveAssistant<Turns>(host: AssistantHost<Turns>) {
 
   type Config = AssistantSettings;
 
+  /** 冷场提醒：只在确认直播中时计时；刚开播时从开播时刻重新计时。 */
   function checkSilence(platform: LivePlatform, state: PlatformState, config: Config, now: number) {
+    const live = host.roomLive(platform) === 'live';
+
+    if (live && !state.live) {
+      state.quietSince = now;
+      state.silenceFired = false;
+    }
+
+    state.live = live;
     const quiet = now - state.quietSince;
 
-    if (config.silence.enabled && !state.silenceFired && quiet >= config.silence.seconds * 1000) {
+    if (
+      live &&
+      config.silence.enabled &&
+      !state.silenceFired &&
+      quiet >= config.silence.seconds * 1000
+    ) {
       state.silenceFired = fire(platform, { kind: 'silence', seconds: Math.round(quiet / 1000) });
     }
   }
@@ -209,7 +228,7 @@ export function createLiveAssistant<Turns>(host: AssistantHost<Turns>) {
     state.lastPeriodicAt = now;
     state.sincePeriodic = 0;
 
-    if (count >= periodicMinimum) {
+    if (count >= config.periodic.minMessages) {
       fire(platform, { kind: 'periodic', minutes: config.periodic.minutes, count });
     }
   }

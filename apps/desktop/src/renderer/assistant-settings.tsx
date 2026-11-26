@@ -118,7 +118,7 @@ export function AssistantSettingsPanel() {
         <RuleRow
           id="rule-silence"
           label="冷场提醒"
-          description="直播间连续一段时间没有新弹幕时，给出接话或暖场的建议（秒）"
+          description="直播中连续一段时间没有新弹幕时，给出接话或暖场的建议；未开播时不提醒（秒）"
           checked={silence.enabled}
           onCheckedChange={enabled => save.mutate({ silence: { ...silence, enabled } })}
         >
@@ -135,10 +135,22 @@ export function AssistantSettingsPanel() {
         <RuleRow
           id="rule-viewers"
           label="记忆观众发言"
-          description="有记忆的观众发弹幕时，提醒主播并给出回应建议（同一观众 10 分钟一次）"
+          description="有记忆的观众发弹幕时，提醒主播并给出回应建议（同一观众的提醒间隔，分钟）"
           checked={memoryViewers.enabled}
-          onCheckedChange={enabled => save.mutate({ memoryViewers: { enabled } })}
-        />
+          onCheckedChange={enabled => save.mutate({ memoryViewers: { ...memoryViewers, enabled } })}
+        >
+          <NumberSetting
+            key={memoryViewers.cooldownMinutes}
+            id="rule-viewers-cooldown"
+            value={memoryViewers.cooldownMinutes}
+            min={1}
+            max={240}
+            disabled={!memoryViewers.enabled}
+            onCommit={cooldownMinutes =>
+              save.mutate({ memoryViewers: { ...memoryViewers, cooldownMinutes } })
+            }
+          />
+        </RuleRow>
         <RuleRow
           id="rule-keywords"
           label="关注词"
@@ -168,7 +180,7 @@ export function AssistantSettingsPanel() {
         <RuleRow
           id="rule-periodic"
           label="定时分析"
-          description="每隔一段时间总结弹幕关注点并给出建议，期间至少 3 条新弹幕才会分析（分钟）"
+          description="每隔一段时间总结弹幕关注点并给出建议（分钟）"
           checked={periodic.enabled}
           onCheckedChange={enabled => save.mutate({ periodic: { ...periodic, enabled } })}
         >
@@ -182,6 +194,21 @@ export function AssistantSettingsPanel() {
             onCommit={minutes => save.mutate({ periodic: { ...periodic, minutes } })}
           />
         </RuleRow>
+        <Field orientation="horizontal">
+          <FieldContent>
+            <FieldLabel htmlFor="rule-periodic-min">定时分析的最少弹幕数</FieldLabel>
+            <FieldDescription>一个周期内新弹幕少于这个数时跳过分析</FieldDescription>
+          </FieldContent>
+          <NumberSetting
+            key={periodic.minMessages}
+            id="rule-periodic-min"
+            value={periodic.minMessages}
+            min={1}
+            max={500}
+            disabled={!periodic.enabled}
+            onCommit={minMessages => save.mutate({ periodic: { ...periodic, minMessages } })}
+          />
+        </Field>
         <Field orientation="horizontal">
           <FieldContent>
             <FieldLabel htmlFor="rule-cooldown">提醒间隔</FieldLabel>
