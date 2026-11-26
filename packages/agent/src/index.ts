@@ -15,9 +15,12 @@ import type { LivePlatform } from '@herald/live';
 import { bundledSkillPaths, expandSkillCommands } from '@herald/skill-tool';
 import { Type } from 'typebox';
 
-export function createSessionStore(dataDirectory: string, platform: LivePlatform) {
-  if (platform !== 'bilibili' && platform !== 'douyin') {
-    throw new TypeError('Expected a supported live platform');
+/** 会话存储作用域：平台助手会话按平台分目录，普通会话统一放在 chat。 */
+export type SessionScope = LivePlatform | 'chat';
+
+export function createSessionStore(dataDirectory: string, platform: SessionScope) {
+  if (platform !== 'bilibili' && platform !== 'douyin' && platform !== 'chat') {
+    throw new TypeError('Expected a supported session scope');
   }
 
   const cwd = resolve(dataDirectory);
@@ -110,12 +113,31 @@ interface LiveAgentOptions {
   thinking?: CreateAgentSessionOptions['thinkingLevel'];
   enabledSkills?: readonly string[];
   tools?: CreateAgentSessionOptions['customTools'];
-  /** 标题写入 session jsonl 之后的回调，用于同步会话列表索引。 */
+  /** 会话历史检索额外覆盖的作用域；普通会话用它跨平台读取历史。 */
+  historyScopes?: readonly SessionScope[];
+  /** 标题写入 session jsonl 之后的回调，用于同步会话列表索引；不传时不提供标题工具。 */
   onTitle?: (title: string) => void;
   /** 用户自定义的角色提示词；为空时使用 defaultSystemPrompt。 */
   systemPrompt?: string | null;
   /** pi 内置的写入、编辑与命令执行工具，默认全部关闭。 */
   builtinTools?: Partial<Record<BuiltinTool, boolean>>;
+}
+
+/** 依次检索多个作用域的会话历史，按时间倒序取前 12 条。 */
+function mergedHistory(stores: readonly ReturnType<typeof createSessionStore>[]) {
+  return {
+    async search(query: string, signal?: AbortSignal) {
+      const matches: HistoryMatch[] = [];
+
+      for (const item of stores) {
+        matches.push(...(await item.search(query, signal)));
+      }
+
+      return matches
+        .sort((left, right) => String(right.timestamp).localeCompare(String(left.timestamp)))
+        .slice(0, 12);
+    },
+  };
 }
 
 export const defaultSystemPrompt =
@@ -171,6 +193,7 @@ export async function createLiveAgent({
   thinking,
   enabledSkills,
   tools = [],
+  historyScopes = [],
   onTitle,
   systemPrompt,
   builtinTools = {},
@@ -210,8 +233,10 @@ export async function createLiveAgent({
   await resourceLoader.reload();
 
   const customTools = [
-    createSessionTitleTool(sessionManager, onTitle),
-    ...createHistoryAgentTools(store),
+    ...(onTitle ? [createSessionTitleTool(sessionManager, onTitle)] : []),
+    ...createHistoryAgentTools(
+      mergedHistory([store, ...historyScopes.map(scope => createSessionStore(cwd, scope))]),
+    ),
     ...tools,
   ];
 

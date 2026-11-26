@@ -1,21 +1,31 @@
-import { blob, index, integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import { sql } from 'drizzle-orm';
+import { blob, index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 import type { ChatModelChoice, CustomProvider } from '../../shared/model-settings.ts';
 import { platforms } from '../../shared/platforms.ts';
 
 /** 会话列表索引；标题以 pi session jsonl 中的 session_info 为准，这里只做缓存。 */
-export const conversations = sqliteTable('conversations', {
-  id: text().primaryKey(),
-  platform: text({ enum: platforms }).notNull(),
-  title: text().notNull(),
-  createdAt: integer('created_at').notNull(),
-  /** chat：普通聊天，不注入弹幕；assistant：主播助手，注入新弹幕并接收提醒，每个平台最多一个。 */
-  mode: text({ enum: ['chat', 'assistant'] })
-    .notNull()
-    .default('chat'),
-  /** 助手模式已注入到上下文的最后一条弹幕时间。 */
-  danmakuCursor: integer('danmaku_cursor').notNull().default(0),
-});
+export const conversations = sqliteTable(
+  'conversations',
+  {
+    id: text().primaryKey(),
+    /** 只有平台助手会话有平台；普通会话为 null。 */
+    platform: text({ enum: platforms }),
+    title: text().notNull(),
+    createdAt: integer('created_at').notNull(),
+    /** chat：普通聊天，不区分平台；assistant：固定的平台助手，注入新弹幕并接收提醒，每个平台一个。 */
+    mode: text({ enum: ['chat', 'assistant'] })
+      .notNull()
+      .default('chat'),
+    /** 助手模式已注入到上下文的最后一条弹幕时间。 */
+    danmakuCursor: integer('danmaku_cursor').notNull().default(0),
+  },
+  table => [
+    uniqueIndex('conversations_assistant_platform')
+      .on(table.platform)
+      .where(sql`${table.mode} = 'assistant'`),
+  ],
+);
 
 export const platformLiveRooms = sqliteTable('platform_live_rooms', {
   platform: text({ enum: platforms }).primaryKey(),

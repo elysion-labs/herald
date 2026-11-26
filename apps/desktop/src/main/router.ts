@@ -21,7 +21,6 @@ import { getPlatformAccount } from './platform-accounts.ts';
 import type { openWorkspace } from './workspace.ts';
 
 const platform = z.enum(platforms);
-const conversationMode = z.enum(['chat', 'assistant']);
 const coordinate = z.number().int().min(0).max(16384);
 const dimension = coordinate.min(1);
 const viewerId = z.string().trim().min(1).max(128);
@@ -113,12 +112,7 @@ export function createRouter(
     },
     conversations: {
       list: os.handler(() => workspace.list()),
-      create: os
-        .input(z.object({ platform, mode: conversationMode.default('chat') }))
-        .handler(({ input }) => workspace.create(input.platform, input.mode)),
-      setMode: os
-        .input(z.object({ id: z.uuid(), mode: conversationMode }))
-        .handler(({ input }) => workspace.setMode(input.id, input.mode)),
+      create: os.handler(() => workspace.create()),
       history: os.input(z.uuid()).handler(({ input }) => workspace.history(input)),
       send: os
         .input(

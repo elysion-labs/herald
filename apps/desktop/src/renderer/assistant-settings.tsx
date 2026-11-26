@@ -111,7 +111,7 @@ export function AssistantSettingsPanel() {
       <CardHeader>
         <CardTitle>直播助手</CardTitle>
         <CardDescription>
-          只对开启了主播助手模式的会话生效：满足下列条件时，Herald 会结合新弹幕和记忆主动给出建议。
+          只对侧栏顶部的平台助手会话生效：满足下列条件时，Herald 会结合新弹幕和记忆主动给出建议。
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-5">

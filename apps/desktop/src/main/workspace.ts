@@ -18,6 +18,7 @@ import {
 } from '../shared/attachments.ts';
 import type { Attachment } from '../shared/attachments.ts';
 import type { ChatModelChoice } from '../shared/model-settings.ts';
+import { platformLabels, platforms } from '../shared/platforms.ts';
 import { openAppSettings } from './app-settings.ts';
 import { openDanmakuStore } from './danmaku-store.ts';
 import { createDanmakuTool } from './danmaku-tool.ts';
@@ -238,6 +239,7 @@ export function openWorkspace(directory: string) {
     db.update(conversations).set({ title }).where(eq(conversations.id, id)).run();
 
   const running = new Set<string>();
+  queueMicrotask(() => ensureAssistants());
   const models = openModelSettings(db, directory);
   const settings = openAppSettings(db, directory);
   const memory = openMemoryLibrary(join(directory, 'memory'));
@@ -258,7 +260,7 @@ export function openWorkspace(directory: string) {
 
   /** 助手模式：取游标之后的新弹幕（最多 30 条）并推进游标；普通模式返回 undefined。 */
   function takeDanmaku(conversation: Conversation) {
-    if (conversation.mode !== 'assistant') {
+    if (conversation.mode !== 'assistant' || !conversation.platform) {
       return undefined;
     }
 
@@ -284,34 +286,46 @@ export function openWorkspace(directory: string) {
     return { count: rows.length, text: `${danmakuData(rows)}${note}` };
   }
 
-  /** 每个平台最多一个助手会话：开启时把同平台其他助手会话退回普通模式。 */
-  function setMode(id: string, mode: ConversationMode) {
-    const conversation = getConversation(id);
-
-    db.transaction(() => {
-      if (mode === 'assistant') {
-        db.update(conversations)
-          .set({ mode: 'chat' })
-          .where(
-            and(
-              eq(conversations.platform, conversation.platform),
-              eq(conversations.mode, 'assistant'),
-            ),
-          )
+  /** 每个平台固定一个助手会话，缺失时创建（标题固定，不参与自动命名）。 */
+  function ensureAssistants() {
+    for (const platform of platforms) {
+      if (!assistantConversation(platform)) {
+        db.insert(conversations)
+          .values({
+            id: randomUUID(),
+            platform,
+            title: `${platformLabels[platform]}助手`,
+            mode: 'assistant',
+            createdAt: Date.now(),
+            danmakuCursor: Date.now() - assistantLookback,
+          })
           .run();
       }
+    }
+  }
 
-      db.update(conversations)
-        .set(
-          mode === 'assistant' && conversation.mode !== 'assistant'
-            ? { mode, danmakuCursor: Date.now() - assistantLookback }
-            : { mode },
-        )
-        .where(eq(conversations.id, id))
-        .run();
-    });
+  function assistantConversation(platform: LivePlatform) {
+    return db
+      .select()
+      .from(conversations)
+      .where(and(eq(conversations.platform, platform), eq(conversations.mode, 'assistant')))
+      .get();
+  }
 
-    return getConversation(id);
+  /** 引用的弹幕存在、出自这位观众、包含引文，且（若指明）来自对应平台。 */
+  function isDanmakuEvidence(
+    id: string,
+    viewerId: string,
+    excerpt: string,
+    platform: LivePlatform | undefined,
+  ) {
+    const evidence = danmaku.find(id);
+
+    return (
+      evidence?.authorId === viewerId &&
+      evidence.text.includes(excerpt) &&
+      (!platform || evidence.platform === platform)
+    );
   }
 
   async function exclusive<T>(id: string, run: () => Promise<T>) {
@@ -336,7 +350,7 @@ export function openWorkspace(directory: string) {
       throw new ORPCError('PRECONDITION_FAILED', { message: '请在设置中配置模型凭证' });
     }
 
-    const store = createSessionStore(directory, conversation.platform);
+    const store = createSessionStore(directory, conversation.platform ?? 'chat');
 
     const target = store.open(conversation.id)
       ? { sessionId: conversation.id }
@@ -347,9 +361,9 @@ export function openWorkspace(directory: string) {
 
     const memoryTools = createMemoryAgentTools({
       memory,
-      platform: conversation.platform,
+      platform: conversation.platform ?? undefined,
       streamerSourceId: sourceId,
-      verifyEvidence(input, id) {
+      verifyEvidence(input, id, target) {
         const { viewerId, quote } = input;
         const uid = viewerId?.trim();
         const excerpt = quote.trim();
@@ -358,9 +372,7 @@ export function openWorkspace(directory: string) {
           return undefined;
         }
 
-        const evidence = danmaku.find(id);
-
-        if (uid && evidence?.authorId === uid && evidence.text.includes(excerpt)) {
+        if (uid && isDanmakuEvidence(id, uid, excerpt, target)) {
           return { id, type: 'danmaku' };
         }
 
@@ -380,7 +392,9 @@ export function openWorkspace(directory: string) {
       model,
       thinking,
       tools: [...(tools ?? []), ...memoryTools, createDanmakuTool(danmaku, conversation.platform)],
-      onTitle: title => rename(title, conversation.id),
+      onTitle: conversation.mode === 'chat' ? title => rename(title, conversation.id) : undefined,
+      // 普通会话可以跨平台读取历史会话。
+      historyScopes: conversation.platform ? [] : platforms,
       systemPrompt: settings.agent().systemPrompt,
       builtinTools: settings.agent().builtinTools,
       ...target,
@@ -397,23 +411,18 @@ export function openWorkspace(directory: string) {
     settings,
     conversation: getConversation,
     isRunning: (id: string) => running.has(id),
-    create(platform: LivePlatform, mode: ConversationMode = 'chat') {
+    /** 新建普通会话，不区分平台。 */
+    create() {
       const id = randomUUID();
 
       db.insert(conversations)
-        .values({ id, platform, title: '新会话', createdAt: Date.now() })
+        .values({ id, platform: null, title: '新会话', createdAt: Date.now() })
         .run();
 
-      return mode === 'assistant' ? setMode(id, mode) : getConversation(id);
+      return getConversation(id);
     },
-    setMode,
-    /** 该平台当前的助手会话。 */
-    assistantConversation: (platform: LivePlatform) =>
-      db
-        .select()
-        .from(conversations)
-        .where(and(eq(conversations.platform, platform), eq(conversations.mode, 'assistant')))
-        .get(),
+    /** 该平台固定的助手会话。 */
+    assistantConversation,
     list: () =>
       db
         .select()
@@ -426,12 +435,12 @@ export function openWorkspace(directory: string) {
       return models.saveChoice(id, choice);
     },
     history(id: string) {
-      const { platform, title } = getConversation(id);
-      const session = createSessionStore(directory, platform).open(id);
+      const { platform, title, mode } = getConversation(id);
+      const session = createSessionStore(directory, platform ?? 'chat').open(id);
       const name = session?.getSessionName();
 
       // 标题以 session jsonl 为准，列表索引不一致时以它恢复。
-      if (name && name !== title) {
+      if (mode === 'chat' && name && name !== title) {
         rename(name, id);
       }
 
@@ -522,7 +531,7 @@ export function openWorkspace(directory: string) {
           assertReply(session.messages.at(-1));
 
           // agent 没有调用 set_session_title 时，用首条消息兜底，同样写入 jsonl。
-          if (!session.sessionName) {
+          if (conversation.mode === 'chat' && !session.sessionName) {
             const title = fallbackTitle(text, attachments);
 
             session.setSessionName(title);

@@ -37,7 +37,6 @@ import {
   MessageSquareText,
   PanelLeft,
   PanelRight,
-  Radio,
   Plus,
   Terminal,
   X,
@@ -56,15 +55,6 @@ import { useDefaultLayout, usePanelRef } from 'react-resizable-panels';
 
 import { Bubble, BubbleContent } from '@/components/ui/bubble';
 import { Button } from '@/components/ui/button';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import {
   Empty,
   EmptyContent,
@@ -97,7 +87,7 @@ import {
 import { attachmentPattern } from '../shared/attachments.ts';
 import { platformLabels, platforms } from '../shared/platforms.ts';
 import { AgentCapabilitySettings, SystemPromptSettings } from './agent-settings.tsx';
-import { AssistantModeToggle } from './assistant-mode.tsx';
+import type { Conversation } from './assistant-mode.tsx';
 import { AssistantSettingsPanel } from './assistant-settings.tsx';
 import { BrowserPane } from './browser-pane.tsx';
 import { AttachmentChip, ChatComposer } from './chat-composer.tsx';
@@ -164,8 +154,7 @@ function useCreateConversation() {
   const navigate = useNavigate();
 
   return useMutation({
-    mutationFn: (input: { platform: LivePlatform; mode: 'chat' | 'assistant' }) =>
-      rpc.conversations.create(input),
+    mutationFn: () => rpc.conversations.create(),
     async onSuccess(conversation) {
       await queryClient.invalidateQueries(conversationsQuery);
       await navigate({ to: '/chat/$id', params: { id: conversation.id } });
@@ -279,46 +268,51 @@ function Sidebar() {
           />
         </nav>
         <div className="nav-section">
+          <h2>直播助手</h2>
+        </div>
+        <div className="grid gap-px">
+          {platforms.map(platform => (
+            <AssistantItem
+              key={platform}
+              platform={platform}
+              conversation={conversations?.find(
+                item => item.mode === 'assistant' && item.platform === platform,
+              )}
+              current={homeActive ? current?.id : undefined}
+            />
+          ))}
+        </div>
+        <div className="nav-section">
           <h2>会话</h2>
-          <NewConversationMenu />
+          <NewConversationButton />
         </div>
         <div className="session-list grid content-start gap-px">
-          {conversations?.map(item => {
-            const selected = homeActive && item.id === current?.id;
+          {conversations
+            ?.filter(item => item.mode === 'chat')
+            .map(item => {
+              const selected = homeActive && item.id === current?.id;
 
-            return (
-              <Link
-                className="nav-item session-link"
-                aria-label={`${item.title} · ${platformLabels[item.platform]}`}
-                data-current={selected}
-                aria-current={selected ? 'page' : undefined}
-                key={item.id}
-                to="/chat/$id"
-                params={{ id: item.id }}
-              >
-                <PlatformIcon platform={item.platform} />
-                <span className="min-w-0 flex-1 truncate">{item.title}</span>
-                {item.mode === 'assistant' && (
-                  <Radio
-                    className="text-muted-foreground size-3.5 shrink-0"
-                    aria-label="主播助手"
-                  />
-                )}
-                <time className="session-time" dateTime={new Date(item.createdAt).toISOString()}>
-                  {shortTime(item.createdAt)}
-                </time>
-              </Link>
-            );
-          })}
-          {conversations?.length === 0 && (
+              return (
+                <Link
+                  className="nav-item session-link"
+                  aria-label={item.title}
+                  data-current={selected}
+                  aria-current={selected ? 'page' : undefined}
+                  key={item.id}
+                  to="/chat/$id"
+                  params={{ id: item.id }}
+                >
+                  <span className="min-w-0 flex-1 truncate">{item.title}</span>
+                  <time className="session-time" dateTime={new Date(item.createdAt).toISOString()}>
+                    {shortTime(item.createdAt)}
+                  </time>
+                </Link>
+              );
+            })}
+          {conversations?.every(item => item.mode !== 'chat') && (
             <p className="text-muted-foreground px-2 py-1 text-xs">还没有会话</p>
           )}
         </div>
-        <section className="live-rooms" aria-label="直播间">
-          {platforms.map(platform => (
-            <LiveRoomItem key={platform} platform={platform} />
-          ))}
-        </section>
       </div>
     </aside>
   );
@@ -359,56 +353,22 @@ function NavItem({
   );
 }
 
-function NewConversationMenu() {
+function NewConversationButton() {
   const create = useCreateConversation();
 
   return (
     <>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            className="text-muted-foreground hover:text-foreground -mr-1"
-            aria-label="新建会话"
-            title="新建会话"
-            disabled={create.isPending}
-          >
-            <Plus />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent
-          className="workspace-dropdown"
-          side="bottom"
-          align="end"
-          sideOffset={4}
-        >
-          <DropdownMenuGroup>
-            <DropdownMenuLabel>普通会话</DropdownMenuLabel>
-            {platforms.map(item => (
-              <DropdownMenuItem
-                key={item}
-                onSelect={() => create.mutate({ platform: item, mode: 'chat' })}
-              >
-                <PlatformIcon platform={item} size={16} /> {platformLabels[item]}
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuGroup>
-          <DropdownMenuSeparator />
-          <DropdownMenuGroup>
-            <DropdownMenuLabel>主播助手</DropdownMenuLabel>
-            {platforms.map(item => (
-              <DropdownMenuItem
-                key={item}
-                onSelect={() => create.mutate({ platform: item, mode: 'assistant' })}
-              >
-                <PlatformIcon platform={item} size={16} /> {platformLabels[item]}
-                <Radio className="text-muted-foreground ml-auto" />
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuGroup>
-        </DropdownMenuContent>
-      </DropdownMenu>
+      <Button
+        variant="ghost"
+        size="icon-xs"
+        className="text-muted-foreground hover:text-foreground -mr-1"
+        aria-label="新建会话"
+        title="新建会话"
+        disabled={create.isPending}
+        onClick={() => create.mutate()}
+      >
+        <Plus />
+      </Button>
       {create.isError && (
         <p role="alert" className="error absolute top-full right-0 left-0">
           {create.error.message}
@@ -418,25 +378,45 @@ function NewConversationMenu() {
   );
 }
 
-function LiveRoomItem({ platform }: { platform: LivePlatform }) {
+/** 固定在侧栏顶部的平台助手会话，附带直播间连接状态。 */
+function AssistantItem({
+  platform,
+  conversation,
+  current,
+}: {
+  platform: LivePlatform;
+  conversation?: Conversation;
+  current?: string;
+}) {
   const { data } = useRoom(platform);
-  const summary = roomSummary(data);
+  const selected = Boolean(conversation) && conversation?.id === current;
+  const detail = data ? `${data.roomId} · ${statusLabels[data.state]}` : '未绑定直播间';
+
+  const body = (
+    <>
+      <PlatformIcon platform={platform} size={16} />
+      <span className="grid min-w-0 flex-1 leading-tight">
+        <span className="truncate text-[13px]">{platformLabels[platform]}助手</span>
+        <span className="text-muted-foreground truncate text-[11px] tabular-nums">{detail}</span>
+      </span>
+      <StatusDot room={data} />
+    </>
+  );
+
+  if (!conversation) {
+    return <div className="live-room opacity-60">{body}</div>;
+  }
 
   return (
     <Link
-      to="/settings"
+      to="/chat/$id"
+      params={{ id: conversation.id }}
       className="live-room"
-      aria-label={`${platformLabels[platform]}直播间：${summary}`}
-      title={summary}
+      data-current={selected}
+      aria-current={selected ? 'page' : undefined}
+      aria-label={`${platformLabels[platform]}助手：${detail}`}
     >
-      <PlatformIcon platform={platform} size={16} />
-      <span className="grid min-w-0 flex-1 leading-tight">
-        <span className="truncate text-[13px]">{platformLabels[platform]}</span>
-        <span className="text-muted-foreground truncate text-[11px] tabular-nums">
-          {data ? `${data.roomId} · ${statusLabels[data.state]}` : '未绑定直播间'}
-        </span>
-      </span>
-      <StatusDot room={data} />
+      {body}
     </Link>
   );
 }
@@ -515,6 +495,8 @@ function Topbar() {
   const { sidebarOpen, browserOpen, setBrowserOpen, danmakuOpen, setDanmakuOpen } =
     useContext(shellContext);
 
+  const isAssistant = useCurrentConversation()?.mode === 'assistant';
+
   const pathname = useLocation({ select: location => location.pathname });
   const titles: Record<string, string> = { '/memory': '记忆', '/settings': '设置' };
   const pageTitle = titles[pathname];
@@ -529,17 +511,20 @@ function Topbar() {
       ) : (
         <>
           <ConversationTitle />
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            className="text-muted-foreground hover:text-foreground aria-pressed:text-foreground ml-auto"
-            aria-pressed={danmakuOpen}
-            aria-label={danmakuOpen ? '隐藏实时弹幕' : '显示实时弹幕'}
-            title={danmakuOpen ? '隐藏实时弹幕' : '显示实时弹幕'}
-            onClick={() => setDanmakuOpen(!danmakuOpen)}
-          >
-            <MessageSquareText />
-          </Button>
+          <span className="ml-auto" />
+          {isAssistant && (
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="text-muted-foreground hover:text-foreground aria-pressed:text-foreground"
+              aria-pressed={danmakuOpen}
+              aria-label={danmakuOpen ? '隐藏实时弹幕' : '显示实时弹幕'}
+              title={danmakuOpen ? '隐藏实时弹幕' : '显示实时弹幕'}
+              onClick={() => setDanmakuOpen(!danmakuOpen)}
+            >
+              <MessageSquareText />
+            </Button>
+          )}
           <Button
             variant="ghost"
             size="icon-sm"
@@ -566,12 +551,11 @@ function ConversationTitle() {
 
   return (
     <div key={conversation.id} className="topbar-title flex min-w-0 items-center gap-2.5">
-      <PlatformIcon platform={conversation.platform} size={16} />
+      {conversation.platform && <PlatformIcon platform={conversation.platform} size={16} />}
       <h1 className="truncate text-sm font-medium" title={conversation.title}>
         {conversation.title}
       </h1>
-      <LiveBadge platform={conversation.platform} />
-      <AssistantModeToggle conversation={conversation} />
+      {conversation.platform && <LiveBadge platform={conversation.platform} />}
     </div>
   );
 }
@@ -594,6 +578,7 @@ function LiveBadge({ platform }: { platform: LivePlatform }) {
 function HomeLayout() {
   const { browserOpen, setBrowserOpen, danmakuOpen, setDanmakuOpen } = useContext(shellContext);
   const conversation = useCurrentConversation();
+  const showDanmaku = danmakuOpen && conversation?.mode === 'assistant';
   const browser = usePanelRef();
 
   const { defaultLayout, onLayoutChanged } = useDefaultLayout({
@@ -638,15 +623,21 @@ function HomeLayout() {
         <ResizablePanel id="conversation" defaultSize="60%" minSize="360px">
           <main className="relative h-full min-w-0">
             <Outlet />
-            {danmakuOpen && conversation && (
-              <DanmakuPanel
-                key={conversation.platform}
-                conversation={conversation}
-                onClose={() => setDanmakuOpen(false)}
-              />
-            )}
           </main>
         </ResizablePanel>
+        {showDanmaku && conversation?.platform && (
+          <>
+            <ResizableHandle className="workbench-divider" aria-label="调整实时弹幕宽度" />
+            <ResizablePanel id="danmaku" defaultSize="22%" minSize="240px" maxSize="40%">
+              <DanmakuPanel
+                key={conversation.id}
+                conversationId={conversation.id}
+                platform={conversation.platform}
+                onClose={() => setDanmakuOpen(false)}
+              />
+            </ResizablePanel>
+          </>
+        )}
         <ResizableHandle className="workbench-divider" aria-label="调整网页预览宽度" />
         <ResizablePanel
           id="browser"
@@ -704,17 +695,10 @@ function Home() {
       </EmptyHeader>
       {!isPending && !error && (
         <EmptyContent className="flex-row justify-center">
-          {platforms.map(item => (
-            <Button
-              key={item}
-              variant="outline"
-              disabled={create.isPending}
-              onClick={() => create.mutate({ platform: item, mode: 'chat' })}
-            >
-              <PlatformIcon platform={item} size={16} />
-              {platformLabels[item]}
-            </Button>
-          ))}
+          <Button variant="outline" disabled={create.isPending} onClick={() => create.mutate()}>
+            <Plus data-icon="inline-start" />
+            新建会话
+          </Button>
         </EmptyContent>
       )}
     </Empty>

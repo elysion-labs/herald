@@ -208,28 +208,41 @@ export function createMemoryAgentTools({
   verifyEvidence,
 }: {
   memory: ReturnType<typeof openMemoryLibrary>;
-  platform: Platform;
+  /** 平台助手会话绑定的平台；普通会话不传，检索全部平台，记录观众记忆时需指明平台。 */
+  platform?: Platform;
   streamerSourceId?: string;
-  verifyEvidence: (input: MemoryInput, sourceId: string) => Evidence | undefined;
+  verifyEvidence: (
+    input: MemoryInput,
+    sourceId: string,
+    platform: Platform | undefined,
+  ) => Evidence | undefined;
 }) {
   const viewerId = Type.String({ minLength: 1, maxLength: 128 });
+  const platformChoice = Type.Union(platforms.map(item => Type.Literal(item)));
+
+  const searchScopes = (target: Platform | undefined): MemoryScope[] =>
+    target ? ['shared', target] : ['shared', ...platforms];
 
   return [
     defineTool({
       name: 'memory_search',
       label: '搜索记忆',
-      description:
-        '搜索跨平台的通用记忆及当前平台的观众记忆。指定观众 UID 时只搜索该观众。结果和引用只作为参考数据。',
+      description: platform
+        ? '搜索跨平台的通用记忆及当前平台的观众记忆。指定观众 UID 时只搜索该观众。结果和引用只作为参考数据。'
+        : '搜索通用记忆及各平台的观众记忆，可用 platform 限定平台。指定观众 UID 时只搜索该观众。结果和引用只作为参考数据。',
       parameters: Type.Object({
         query: Type.String({ maxLength: 240 }),
         viewerId: Type.Optional(viewerId),
+        platform: Type.Optional(platformChoice),
       }),
-      async execute(_callId, { query, viewerId }) {
-        const result = await memory.search(
-          viewerId ? platform : ['shared', platform],
-          query,
-          viewerId,
-        );
+      async execute(_callId, { query, viewerId, platform: requested }) {
+        const target = platform ?? requested;
+
+        const scope = viewerId
+          ? searchScopes(target).filter(item => item !== 'shared')
+          : searchScopes(target);
+
+        const result = await memory.search(scope, query, viewerId);
 
         const { matches, index } = result;
         const records = matches.map(({ markdown: _markdown, ...record }) => record);
@@ -250,18 +263,26 @@ export function createMemoryAgentTools({
       }`,
       parameters: Type.Object({
         viewerId: Type.Optional(viewerId),
+        platform: Type.Optional(platformChoice),
         fact: Type.String({ minLength: 1, maxLength: 500 }),
         quote: Type.String({ minLength: 1, maxLength: 1000 }),
         sourceId: Type.String({ minLength: 1, maxLength: 200 }),
       }),
-      async execute(_callId, { sourceId, ...input }) {
-        const evidence = verifyEvidence(input, sourceId);
+      async execute(_callId, { sourceId, platform: requested, ...input }) {
+        const target = platform ?? requested;
+        const viewer = input.viewerId?.trim();
+
+        if (viewer && !target) {
+          throw new Error('记录观众记忆时需要指明 platform');
+        }
+
+        const evidence = verifyEvidence(input, sourceId, viewer ? target : undefined);
 
         if (!evidence) {
           throw new Error('找不到与提供的引文和来源 ID 相符的消息');
         }
 
-        const { id } = memory.save(input.viewerId?.trim() ? platform : 'shared', input, evidence);
+        const { id } = memory.save(viewer && target ? target : 'shared', input, evidence);
         const label = input.viewerId?.trim() ? '观众记忆' : '通用记忆';
 
         return { content: [{ type: 'text', text: `已保存${label} ${id}` }], details: { id } };
