@@ -17,7 +17,10 @@ async function start() {
   const workspace = openWorkspace(directory);
   await migrateWebLogin(directory).catch(() => console.warn('无法迁移旧版网页登录状态'));
   workspace.rooms.start();
-  app.once('before-quit', () => workspace.rooms.stop());
+  app.once('before-quit', () => {
+    workspace.rooms.stop();
+    workspace.danmaku.dispose();
+  });
 
   function createWindow() {
     const window = new BrowserWindow({

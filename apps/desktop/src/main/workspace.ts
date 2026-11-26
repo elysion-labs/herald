@@ -19,6 +19,7 @@ import {
 import type { Attachment } from '../shared/attachments.ts';
 import type { ChatModelChoice } from '../shared/model-settings.ts';
 import { openAppSettings } from './app-settings.ts';
+import { openDanmakuStore } from './danmaku-store.ts';
 import { openDatabase, schema } from './db/index.ts';
 import { openLiveRooms } from './live-rooms.ts';
 import type { LiveMessage } from './live-rooms.ts';
@@ -244,6 +245,8 @@ export function openWorkspace(directory: string) {
   }
 
   const rooms = openLiveRooms(db);
+  const danmaku = openDanmakuStore(db);
+  rooms.onMessage(message => danmaku.add(message));
 
   async function exclusive<T>(id: string, run: () => Promise<T>) {
     running.add(id);
@@ -290,7 +293,7 @@ export function openWorkspace(directory: string) {
           return undefined;
         }
 
-        const evidence = recent.find(message => message.evidenceId === id);
+        const evidence = danmaku.find(id);
 
         if (uid && evidence?.authorId === uid && evidence.text.includes(excerpt)) {
           return { id, type: 'danmaku' };
@@ -325,6 +328,7 @@ export function openWorkspace(directory: string) {
     models,
     memory,
     rooms,
+    danmaku,
     settings,
     conversation: getConversation,
     isRunning: (id: string) => running.has(id),
