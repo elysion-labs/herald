@@ -98,24 +98,23 @@ export function openDanmakuStore(db: Database) {
         .all()
         .reverse();
     },
-    /** 统计：发言最多的观众，或按分钟的弹幕量。 */
-    stats(input: DanmakuQuery & { by: 'viewer' | 'minute' }) {
+    /** 发言最多的观众。 */
+    viewers(input: DanmakuQuery) {
       flush();
-      const limit = Math.min(input.limit ?? 20, 100);
+      const total = count();
 
-      if (input.by === 'viewer') {
-        const total = count();
-
-        return db
-          .select({ viewerId: danmaku.authorId, viewerName: danmaku.authorName, count: total })
-          .from(danmaku)
-          .where(filters(input))
-          .groupBy(danmaku.authorId)
-          .orderBy(desc(total))
-          .limit(limit)
-          .all();
-      }
-
+      return db
+        .select({ viewerId: danmaku.authorId, viewerName: danmaku.authorName, count: total })
+        .from(danmaku)
+        .where(filters(input))
+        .groupBy(danmaku.authorId)
+        .orderBy(desc(total))
+        .limit(Math.min(input.limit ?? 20, 100))
+        .all();
+    },
+    /** 每分钟弹幕量，按时间正序。 */
+    timeline(input: DanmakuQuery) {
+      flush();
       const minute = sql<number>`(${danmaku.receivedAt} / 60000) * 60000`;
 
       return db
@@ -124,7 +123,7 @@ export function openDanmakuStore(db: Database) {
         .where(filters(input))
         .groupBy(minute)
         .orderBy(desc(minute))
-        .limit(limit)
+        .limit(Math.min(input.limit ?? 60, 240))
         .all()
         .reverse();
     },

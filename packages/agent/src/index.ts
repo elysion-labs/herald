@@ -156,7 +156,9 @@ function createSessionTitleTool(sessionManager: SessionManager, onTitle?: (title
   });
 }
 
-export { ModelRuntime } from '@earendil-works/pi-coding-agent';
+export { defineTool, ModelRuntime } from '@earendil-works/pi-coding-agent';
+
+export { Type } from 'typebox';
 
 export { getSupportedThinkingLevels } from '@earendil-works/pi-ai/compat';
 
