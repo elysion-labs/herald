@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { EventEmitter, on } from 'node:events';
 
-import { createLiveChat } from '@herald/live';
-import type { LiveChatMessage, LivePlatform } from '@herald/live';
+import { createLiveChat, fetchLiveStatus } from '@herald/live';
+import type { LiveChatMessage, LivePlatform, LiveStatus } from '@herald/live';
 import { ORPCError } from '@orpc/server';
 import { eq } from 'drizzle-orm';
 
@@ -17,7 +17,13 @@ interface RoomConnection {
   error?: string;
   received: number;
   recent: LiveMessage[];
+  /** 是否在播：连接时查询一次，之后定时轮询，B 站另有开播 / 下播事件即时更新。 */
+  live: LiveStatus;
+  poll?: ReturnType<typeof setInterval>;
+  controller: AbortController;
 }
+
+const livePollInterval = 60 * 1000;
 
 export type LiveMessage = LiveChatMessage & { evidenceId: string };
 
@@ -72,6 +78,8 @@ export function openLiveRooms(db: Database) {
   function stop(platform: LivePlatform) {
     const previous = connections.get(platform);
     connections.delete(platform);
+    previous?.controller.abort();
+    clearInterval(previous?.poll);
     void previous?.client?.dispose().catch(() => undefined);
   }
 
@@ -83,15 +91,8 @@ export function openLiveRooms(db: Database) {
     }
 
     const connection = connections.get(platform);
-    const state = connection?.client?.state() ?? (connection?.error ? 'failed' : 'idle');
 
-    return {
-      roomId,
-      url: liveRoomUrl(platform, roomId),
-      state,
-      error: state === 'connected' ? undefined : connection?.error,
-      received: connection?.received ?? 0,
-    };
+    return { roomId, url: liveRoomUrl(platform, roomId), ...connectionStatus(connection) };
   }
 
   function connect(platform: LivePlatform) {
@@ -102,8 +103,31 @@ export function openLiveRooms(db: Database) {
       return;
     }
 
-    const connection: RoomConnection = { received: 0, recent: [] };
+    const connection: RoomConnection = {
+      received: 0,
+      recent: [],
+      live: 'unknown',
+      controller: new AbortController(),
+    };
+
     connections.set(platform, connection);
+
+    const { signal } = connection.controller;
+
+    const refreshLive = async () => {
+      const cookie = await readLiveCookies(platform, signal).catch(() => null);
+
+      const live = await fetchLiveStatus(platform, roomId, { cookie, signal }).catch(
+        () => 'unknown' as const,
+      );
+
+      if (!signal.aborted && live !== 'unknown') {
+        connection.live = live;
+      }
+    };
+
+    void refreshLive();
+    connection.poll = setInterval(() => void refreshLive(), livePollInterval);
 
     try {
       const client = createLiveChat({
@@ -112,6 +136,9 @@ export function openLiveRooms(db: Database) {
         readCookie: signal => readLiveCookies(platform, signal),
         onError(error) {
           connection.error = explainFailure(error);
+        },
+        onLiveStatus(live) {
+          connection.live = live;
         },
         onMessage(message) {
           if (connections.get(platform) !== connection) {
@@ -194,6 +221,17 @@ export function openLiveRooms(db: Database) {
 
       return status(platform);
     },
+  };
+}
+
+function connectionStatus(connection: RoomConnection | undefined) {
+  const state = connection?.client?.state() ?? (connection?.error ? 'failed' : 'idle');
+
+  return {
+    state,
+    error: state === 'connected' ? undefined : connection?.error,
+    received: connection?.received ?? 0,
+    live: connection?.live ?? 'unknown',
   };
 }
 
