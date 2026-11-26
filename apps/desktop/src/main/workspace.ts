@@ -324,6 +324,26 @@ export function openWorkspace(directory: string) {
     );
   }
 
+  /** 告诉 agent 当前绑定的直播间以及本会话的身份。 */
+  function roomContext(conversation: Conversation) {
+    const bindings = platforms.map(platform => {
+      const room = rooms.status(platform);
+
+      return `- ${platformLabels[platform]}：${room ? `直播间 ${room.roomId}（${room.url}）` : '未绑定直播间'}`;
+    });
+
+    const label = conversation.platform ? platformLabels[conversation.platform] : undefined;
+    let scope = '本会话是普通会话，不属于某个平台。';
+
+    if (label && conversation.mode === 'assistant') {
+      scope = `本会话是${label}的直播助手会话，默认针对${label}直播间。`;
+    } else if (label) {
+      scope = `本会话是${label}的一场历史直播。`;
+    }
+
+    return ['## 当前绑定的直播间', ...bindings, scope].join('\n');
+  }
+
   async function exclusive<T>(id: string, run: () => Promise<T>) {
     running.add(id);
 
@@ -393,6 +413,7 @@ export function openWorkspace(directory: string) {
       historyScopes: conversation.platform ? [] : platforms,
       systemPrompt: settings.agent().systemPrompt,
       builtinTools: settings.agent().builtinTools,
+      context: roomContext(conversation),
       ...target,
     });
 

@@ -110,6 +110,126 @@ async function douyinStatus(
   return status === 2 ? 'live' : 'offline';
 }
 
+/** 主播与直播间的公开资料，用于让 agent 了解当前绑定的直播间。 */
+export interface RoomProfile {
+  platform: LivePlatform;
+  roomId: string;
+  streamer: string | null;
+  streamerId: string | null;
+  title: string | null;
+  area: string | null;
+  tags: string[];
+  followers: number | null;
+  description: string | null;
+  live: LiveStatus;
+}
+
+function plainText(html: string | undefined) {
+  const text = html
+    ?.replaceAll(/<[^>]+>/g, ' ')
+    .replaceAll('&nbsp;', ' ')
+    .replaceAll(/\s+/g, ' ')
+    .trim();
+
+  return text ? text.slice(0, 300) : null;
+}
+
+/** 取字符串字段，空值和非字符串都返回 null。 */
+function field(value: unknown) {
+  return typeof value === 'string' && value ? value : null;
+}
+
+async function getJson(url: string, init: RequestInit) {
+  const response = await fetch(url, init);
+
+  return (await response.json()) as { data?: Record<string, unknown> };
+}
+
+async function bilibiliProfile(roomId: string, signal?: AbortSignal): Promise<RoomProfile> {
+  const init = { headers: { 'user-agent': userAgent }, signal };
+  const id = encodeURIComponent(roomId);
+
+  const [info, anchor] = await Promise.all([
+    getJson(`https://api.live.bilibili.com/room/v1/Room/get_info?room_id=${id}`, init),
+    getJson(
+      `https://api.live.bilibili.com/live_user/v1/UserInfo/get_anchor_in_room?roomid=${id}`,
+      init,
+    ),
+  ]);
+
+  const room = info.data ?? {};
+  const user = (anchor.data?.info ?? {}) as Record<string, unknown>;
+  const area = [field(room.parent_area_name), field(room.area_name)].filter(Boolean).join(' / ');
+
+  return {
+    platform: 'bilibili',
+    roomId,
+    streamer: field(user.uname),
+    streamerId: typeof user.uid === 'number' ? String(user.uid) : null,
+    title: field(room.title),
+    area: area || null,
+    tags: field(room.tags)?.split(',') ?? [],
+    followers: typeof room.attention === 'number' ? room.attention : null,
+    description: plainText(field(room.description) ?? undefined),
+    live: room.live_status === 1 ? 'live' : 'offline',
+  };
+}
+
+async function douyinProfile(
+  roomId: string,
+  cookie: string | null | undefined,
+  signal?: AbortSignal,
+): Promise<RoomProfile> {
+  const query = new URLSearchParams({
+    aid: '6383',
+    app_name: 'douyin_web',
+    live_id: '1',
+    device_platform: 'web',
+    language: 'zh-CN',
+    browser_language: 'zh-CN',
+    browser_platform: 'Win32',
+    browser_name: 'Chrome',
+    browser_version: '140.0.0.0',
+    web_rid: roomId,
+  });
+
+  const body = await getJson(`${douyinOrigin}/webcast/room/web/enter/?${query}`, {
+    headers: {
+      'user-agent': userAgent,
+      referer: `${douyinOrigin}/`,
+      cookie: await douyinCookie(cookie, signal),
+    },
+    signal,
+  });
+
+  const room = ((body.data?.data as unknown[] | undefined)?.[0] ?? {}) as Record<string, unknown>;
+  const owner = (room.owner ?? {}) as Record<string, unknown>;
+
+  return {
+    platform: 'douyin',
+    roomId,
+    streamer: field(owner.nickname),
+    streamerId: field(owner.id_str),
+    title: field(room.title),
+    area: null,
+    tags: [],
+    followers: null,
+    description: field(owner.signature)?.slice(0, 300) ?? null,
+    live: room.status === 2 ? 'live' : 'offline',
+  };
+}
+
+/** 读取主播与直播间资料；失败时抛出错误。 */
+export function fetchRoomProfile(
+  platform: LivePlatform,
+  roomId: string,
+  { cookie, signal }: { cookie?: string | null; signal?: AbortSignal } = {},
+) {
+  return platform === 'bilibili'
+    ? bilibiliProfile(roomId, signal)
+    : douyinProfile(roomId, cookie, signal);
+}
+
 /**
  * 查询直播间当前是否在播。
  * B 站读 room/v1/Room/get_info 的 live_status（1 为直播中）；

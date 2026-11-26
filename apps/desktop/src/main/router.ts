@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { EventEmitter, on } from 'node:events';
 
 import { createBrowserAgentTools } from '@herald/browser-tool';
+import { fetchRoomProfile } from '@herald/live';
 import { createLiveAssistant } from '@herald/live-assistant';
 import { assistantSettings } from '@herald/live-assistant/settings';
 import { os } from '@orpc/server';
@@ -18,7 +19,7 @@ import {
 import { platforms } from '../shared/platforms.ts';
 import type { createWorkspaceBrowser } from './browser.ts';
 import { createLiveSessions } from './live-sessions.ts';
-import { getPlatformAccount } from './platform-accounts.ts';
+import { getPlatformAccount, readLiveCookies } from './platform-accounts.ts';
 import type { openWorkspace } from './workspace.ts';
 
 const platform = z.enum(platforms);
@@ -75,6 +76,20 @@ export function createRouter(
       watch: os
         .input(platform)
         .handler(({ input, signal }) => workspace.rooms.watch(input, signal)),
+      /** 当前绑定直播间的主播资料（平台接口）。 */
+      profile: os.input(platform).handler(async ({ input, signal }) => {
+        const room = workspace.rooms.status(input);
+
+        if (!room) {
+          return null;
+        }
+
+        const cookie = await readLiveCookies(input, signal ?? new AbortController().signal).catch(
+          () => null,
+        );
+
+        return fetchRoomProfile(input, room.roomId, { cookie, signal });
+      }),
       reconnect: os.input(platform).handler(({ input }) => {
         workspace.rooms.connect(input);
 

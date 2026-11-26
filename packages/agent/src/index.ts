@@ -121,6 +121,8 @@ interface LiveAgentOptions {
   systemPrompt?: string | null;
   /** pi 内置的写入、编辑与命令执行工具，默认全部关闭。 */
   builtinTools?: Partial<Record<BuiltinTool, boolean>>;
+  /** 追加在系统提示词末尾的宿主信息，例如当前绑定的直播间；变化很少，不影响提示缓存。 */
+  context?: string;
 }
 
 /** 依次检索多个作用域的会话历史，按时间倒序取前 12 条。 */
@@ -197,6 +199,7 @@ export async function createLiveAgent({
   onTitle,
   systemPrompt,
   builtinTools = {},
+  context,
 }: LiveAgentOptions) {
   const sessionManager =
     sessionId === undefined ? store.create(newSessionId) : store.open(sessionId);
@@ -222,6 +225,7 @@ export async function createLiveAgent({
     additionalSkillPaths: bundled,
     extensionFactories: [createMcpExtension()],
     systemPromptOverride: () => (systemPrompt?.trim() ? systemPrompt.trim() : defaultSystemPrompt),
+    appendSystemPromptOverride: base => (context ? [...base, context] : base),
     skillsOverride: base => ({
       ...base,
       skills: base.skills.filter(

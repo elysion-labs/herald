@@ -990,6 +990,7 @@ function ChatSession({ id }: { id: string }) {
   const queryClient = useQueryClient();
   const historyQuery = { queryKey: ['history', id], queryFn: () => rpc.conversations.history(id) };
   const history = useQuery({ ...historyQuery, refetchOnWindowFocus: false });
+  const conversation = useQuery(conversationsQuery).data?.find(item => item.id === id);
 
   const refresh = useCallback(
     () =>
@@ -1070,6 +1071,7 @@ function ChatSession({ id }: { id: string }) {
           )}
           <ChatComposer
             id={id}
+            conversation={conversation}
             input={input}
             busy={send.isPending}
             locked={send.isPending || savingModel}

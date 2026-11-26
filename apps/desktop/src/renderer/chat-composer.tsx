@@ -17,8 +17,10 @@ import {
   maxTextAttachmentBytes,
 } from '../shared/attachments.ts';
 import type { Attachment } from '../shared/attachments.ts';
+import type { Conversation } from './assistant-mode.tsx';
 import { ChatModelControls } from './chat-model-controls.tsx';
 import { ContextUsage } from './context-usage.tsx';
+import { QuickPrompts } from './quick-prompts.tsx';
 
 export interface ComposerMessage {
   text: string;
@@ -71,8 +73,10 @@ export function ChatComposer({
   busy,
   locked,
   onSend,
+  conversation,
 }: {
   id: string;
+  conversation?: Conversation;
   input: RefObject<HTMLTextAreaElement | null>;
   /** 正在发送：输入只读、附件不可改。 */
   busy: boolean;
@@ -233,6 +237,11 @@ export function ChatComposer({
               add(event.target.files ?? []);
               event.target.value = '';
             }}
+          />
+          <QuickPrompts
+            conversation={conversation}
+            disabled={locked}
+            onSend={message => onSend({ text: message, attachments: [] })}
           />
           <ChatModelControls id={id} disabled={busy} />
           <span className="text-muted-foreground/60 ml-auto px-1 text-[11px] select-none max-sm:hidden">
