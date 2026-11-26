@@ -110,15 +110,17 @@ Pi 内置的写入、编辑和执行命令工具默认关闭，可以在同一�
 
 ## 工作区
 
-| 目录                    | 职责                                                           |
-| ----------------------- | -------------------------------------------------------------- |
-| `apps/desktop`          | Electron 主进程、oRPC 接口、数据库与 React 工作台（shadcn/ui） |
-| `packages/agent`        | 组装 Pi 会话：资源发现、MCP、内置工具开关、会话标题工具        |
-| `packages/live`         | 把本地的 B 站和抖音客户端接入统一的弹幕适配器                  |
-| `packages/memory-tool`  | 按平台保存观众记忆，通过 QMD 提供检索与 agent 工具             |
-| `packages/browser-tool` | 内置浏览器的 agent 工具，点击和滚动使用相对于截图的坐标        |
-| `packages/history-tool` | 检索历史会话                                                   |
-| `packages/skill-tool`   | Herald 自带的 skills，以及多个 `/skill:` 命令的展开            |
+| 目录                      | 职责                                                           |
+| ------------------------- | -------------------------------------------------------------- |
+| `apps/desktop`            | Electron 主进程、oRPC 接口、数据库与 React 工作台（shadcn/ui） |
+| `packages/agent`          | 组装 Pi 会话：资源发现、MCP、内置工具开关、会话标题工具        |
+| `packages/live`           | 把本地的 B 站和抖音客户端接入统一的弹幕适配器                  |
+| `packages/danmaku`        | 弹幕的 SQLite 存储、助手会话的增量注入与 `query_danmaku` 工具  |
+| `packages/live-assistant` | 冷场、记忆观众、关注词与定时分析的提醒调度和提示词             |
+| `packages/memory-tool`    | 按平台保存观众记忆，通过 QMD 提供检索与 agent 工具             |
+| `packages/browser-tool`   | 内置浏览器的 agent 工具，点击和滚动使用相对于截图的坐标        |
+| `packages/history-tool`   | 检索历史会话                                                   |
+| `packages/skill-tool`     | Herald 自带的 skills，以及多个 `/skill:` 命令的展开            |
 
 ## 开发
 
