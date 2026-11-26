@@ -263,6 +263,9 @@ importers:
       '@herald/browser-tool':
         specifier: workspace:*
         version: link:../../packages/browser-tool
+      '@herald/danmaku':
+        specifier: workspace:*
+        version: link:../../packages/danmaku
       '@herald/live':
         specifier: workspace:*
         version: link:../../packages/live
@@ -390,6 +393,21 @@ importers:
       '@earendil-works/pi-coding-agent':
         specifier: 1.6.0
         version: 1.6.0(@aws-sdk/credential-provider-node@3.972.98)(@smithy/signature-v4@5.7.5)(google-auth-library@10.9.1)(ws@8.23.0)(zod@4.6.7)
+      typebox:
+        specifier: 1.3.27
+        version: 1.3.27
+
+  packages/danmaku:
+    dependencies:
+      '@earendil-works/pi-coding-agent':
+        specifier: 1.6.0
+        version: 1.6.0(@aws-sdk/credential-provider-node@3.972.98)(@smithy/signature-v4@5.7.5)(google-auth-library@10.9.1)(ws@8.23.0)(zod@4.6.7)
+      '@herald/live':
+        specifier: workspace:*
+        version: link:../live
+      drizzle-orm:
+        specifier: 'catalog:'
+        version: 1.0.0-beta.22(better-sqlite3@13.2.0)(typebox@1.3.27)(zod@4.6.7)
       typebox:
         specifier: 1.3.27
         version: 1.3.27

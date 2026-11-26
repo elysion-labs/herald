@@ -14,6 +14,7 @@
   "dependencies": {
     "@herald/agent": "workspace:*",
     "@herald/browser-tool": "workspace:*",
+    "@herald/danmaku": "workspace:*",
     "@herald/live": "workspace:*",
     "@herald/memory-tool": "workspace:*",
     "@orpc/client": "1.16.5",

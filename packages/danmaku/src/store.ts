@@ -1,9 +1,22 @@
 import type { LivePlatform } from '@herald/live';
 import { and, count, desc, eq, gt, gte, lt, lte, or, sql } from 'drizzle-orm';
+import type { BaseSQLiteDatabase } from 'drizzle-orm/sqlite-core';
 
-import type { Database } from './db/index.ts';
-import * as schema from './db/schema.ts';
-import type { LiveMessage } from './live-rooms.ts';
+import * as schema from './schema.ts';
+
+/** 任意同步 SQLite drizzle 实例（例如 drizzle-orm/node-sqlite）。 */
+export type DanmakuDatabase = BaseSQLiteDatabase<'sync', any, any, any>;
+
+/** 写入一条弹幕需要的字段；evidenceId 供记忆核验引用。 */
+export interface DanmakuMessage {
+  evidenceId: string;
+  platform: LivePlatform;
+  roomId: string;
+  authorId: string | null;
+  authorName: string | null;
+  text: string;
+  receivedAt: number;
+}
 
 const flushDelay = 1000;
 const retention = 30 * 24 * 60 * 60 * 1000;
@@ -28,7 +41,7 @@ function escapeLike(value: string) {
  * 弹幕持久化：收到的弹幕先进缓冲区，每秒用一个事务批量写入，保留 30 天。
  * 查询前会先落盘缓冲区，保证刚到的弹幕也能查到。
  */
-export function openDanmakuStore(db: Database) {
+export function openDanmakuStore(db: DanmakuDatabase) {
   const { danmaku } = schema;
   let buffer: StoredDanmaku[] = [];
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -66,7 +79,7 @@ export function openDanmakuStore(db: Database) {
     .run();
 
   return {
-    add(message: LiveMessage) {
+    add(message: DanmakuMessage) {
       buffer.push({
         evidenceId: message.evidenceId,
         platform: message.platform,

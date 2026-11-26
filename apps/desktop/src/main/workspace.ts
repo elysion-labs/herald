@@ -3,6 +3,7 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { createLiveAgent, createSessionStore } from '@herald/agent';
+import { createDanmakuTool, freshDanmaku, openDanmakuStore } from '@herald/danmaku';
 import type { LivePlatform } from '@herald/live';
 import { createMemoryAgentTools, openMemoryLibrary } from '@herald/memory-tool';
 import { ORPCError } from '@orpc/server';
@@ -20,11 +21,8 @@ import type { Attachment } from '../shared/attachments.ts';
 import type { ChatModelChoice } from '../shared/model-settings.ts';
 import { platformLabels, platforms } from '../shared/platforms.ts';
 import { openAppSettings } from './app-settings.ts';
-import { openDanmakuStore } from './danmaku-store.ts';
-import { createDanmakuTool } from './danmaku-tool.ts';
 import { openDatabase, schema } from './db/index.ts';
 import { openLiveRooms } from './live-rooms.ts';
-import type { LiveMessage } from './live-rooms.ts';
 import { openModelSettings } from './model-settings.ts';
 
 type Conversation = typeof schema.conversations.$inferSelect;
@@ -36,19 +34,6 @@ const injectLimit = 30;
 const assistantLookback = 2 * 60 * 1000;
 
 export type ConversationMode = Conversation['mode'];
-
-function danmakuData(
-  recent: readonly Pick<LiveMessage, 'evidenceId' | 'authorId' | 'authorName' | 'text'>[],
-) {
-  return JSON.stringify(
-    recent.map(({ evidenceId, authorId, authorName, text }) => ({
-      sourceId: evidenceId,
-      viewerId: authorId,
-      viewerName: authorName,
-      text,
-    })),
-  );
-}
 
 function reminderReason(trigger: ReminderTrigger) {
   switch (trigger.kind) {
@@ -264,26 +249,21 @@ export function openWorkspace(directory: string) {
       return undefined;
     }
 
-    const { rows, skipped } = danmaku.after(
+    const fresh = freshDanmaku(
+      danmaku,
       conversation.platform,
       conversation.danmakuCursor,
       injectLimit,
     );
 
-    const last = rows.at(-1);
-
-    if (last) {
+    if (fresh.cursor !== conversation.danmakuCursor) {
       db.update(conversations)
-        .set({ danmakuCursor: last.receivedAt })
+        .set({ danmakuCursor: fresh.cursor })
         .where(eq(conversations.id, conversation.id))
         .run();
     }
 
-    const note = skipped
-      ? `\n另有 ${skipped} 条更早的新弹幕未展示，需要时用 query_danmaku 查询。`
-      : '';
-
-    return { count: rows.length, text: `${danmakuData(rows)}${note}` };
+    return fresh;
   }
 
   /** 每个平台固定一个助手会话，缺失时创建（标题固定，不参与自动命名）。 */
