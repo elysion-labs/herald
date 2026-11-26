@@ -6,6 +6,8 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 
 import { platformLabels } from '../shared/platforms.ts';
+import { AssistantSection } from './assistant-mode.tsx';
+import type { Conversation } from './assistant-mode.tsx';
 import { roomSummary, StatusDot, useRoom } from './live-status.tsx';
 import { PlatformIcon } from './platform-icon.tsx';
 import { rpc } from './rpc.ts';
@@ -47,12 +49,13 @@ function useDanmaku(platform: LivePlatform) {
 
 /** 悬浮在聊天右上角的实时弹幕参考面板。 */
 export function DanmakuPanel({
-  platform,
+  conversation,
   onClose,
 }: {
-  platform: LivePlatform;
+  conversation: Conversation;
   onClose: () => void;
 }) {
+  const { platform } = conversation;
   const messages = useDanmaku(platform);
   const { data: room } = useRoom(platform);
   const list = useRef<HTMLOListElement>(null);
@@ -88,6 +91,7 @@ export function DanmakuPanel({
           <X />
         </Button>
       </header>
+      <AssistantSection conversation={conversation} />
       <div className="relative flex min-h-0 flex-1 flex-col">
         {messages.length === 0 ? (
           <p className="text-muted-foreground grid flex-1 place-items-center px-6 py-10 text-center text-xs">

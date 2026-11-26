@@ -37,6 +37,7 @@ import {
   MessageSquareText,
   PanelLeft,
   PanelRight,
+  Radio,
   Plus,
   Terminal,
   X,
@@ -60,6 +61,8 @@ import {
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import {
@@ -94,6 +97,7 @@ import {
 import { attachmentPattern } from '../shared/attachments.ts';
 import { platformLabels, platforms } from '../shared/platforms.ts';
 import { AgentCapabilitySettings, SystemPromptSettings } from './agent-settings.tsx';
+import { AssistantModeToggle } from './assistant-mode.tsx';
 import { BrowserPane } from './browser-pane.tsx';
 import { AttachmentChip, ChatComposer } from './chat-composer.tsx';
 import type { ComposerMessage } from './chat-composer.tsx';
@@ -159,7 +163,8 @@ function useCreateConversation() {
   const navigate = useNavigate();
 
   return useMutation({
-    mutationFn: (platform: LivePlatform) => rpc.conversations.create({ platform }),
+    mutationFn: (input: { platform: LivePlatform; mode: 'chat' | 'assistant' }) =>
+      rpc.conversations.create(input),
     async onSuccess(conversation) {
       await queryClient.invalidateQueries(conversationsQuery);
       await navigate({ to: '/chat/$id', params: { id: conversation.id } });
@@ -292,6 +297,12 @@ function Sidebar() {
               >
                 <PlatformIcon platform={item.platform} />
                 <span className="min-w-0 flex-1 truncate">{item.title}</span>
+                {item.mode === 'assistant' && (
+                  <Radio
+                    className="text-muted-foreground size-3.5 shrink-0"
+                    aria-label="主播助手"
+                  />
+                )}
                 <time className="session-time" dateTime={new Date(item.createdAt).toISOString()}>
                   {shortTime(item.createdAt)}
                 </time>
@@ -372,9 +383,26 @@ function NewConversationMenu() {
           sideOffset={4}
         >
           <DropdownMenuGroup>
+            <DropdownMenuLabel>普通会话</DropdownMenuLabel>
             {platforms.map(item => (
-              <DropdownMenuItem key={item} onSelect={() => create.mutate(item)}>
+              <DropdownMenuItem
+                key={item}
+                onSelect={() => create.mutate({ platform: item, mode: 'chat' })}
+              >
                 <PlatformIcon platform={item} size={16} /> {platformLabels[item]}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuGroup>
+          <DropdownMenuSeparator />
+          <DropdownMenuGroup>
+            <DropdownMenuLabel>主播助手</DropdownMenuLabel>
+            {platforms.map(item => (
+              <DropdownMenuItem
+                key={item}
+                onSelect={() => create.mutate({ platform: item, mode: 'assistant' })}
+              >
+                <PlatformIcon platform={item} size={16} /> {platformLabels[item]}
+                <Radio className="text-muted-foreground ml-auto" />
               </DropdownMenuItem>
             ))}
           </DropdownMenuGroup>
@@ -542,6 +570,7 @@ function ConversationTitle() {
         {conversation.title}
       </h1>
       <LiveBadge platform={conversation.platform} />
+      <AssistantModeToggle conversation={conversation} />
     </div>
   );
 }
@@ -611,7 +640,7 @@ function HomeLayout() {
             {danmakuOpen && conversation && (
               <DanmakuPanel
                 key={conversation.platform}
-                platform={conversation.platform}
+                conversation={conversation}
                 onClose={() => setDanmakuOpen(false)}
               />
             )}
@@ -679,7 +708,7 @@ function Home() {
               key={item}
               variant="outline"
               disabled={create.isPending}
-              onClick={() => create.mutate(item)}
+              onClick={() => create.mutate({ platform: item, mode: 'chat' })}
             >
               <PlatformIcon platform={item} size={16} />
               {platformLabels[item]}

@@ -591,6 +591,27 @@ a:focus-visible {
     transform: translateY(-6px) scale(0.96);
   }
 }
+.assistant-binding {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  margin: 0 12px 8px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--secondary) 60%, transparent);
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.reminder-card {
+  display: grid;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  animation: fade-up 220ms var(--ease-out) both;
+}
 .danmaku-list {
   scrollbar-width: thin;
   scrollbar-color: color-mix(in srgb, var(--muted-foreground) 32%, transparent) transparent;
