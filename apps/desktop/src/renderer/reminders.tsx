@@ -28,6 +28,7 @@ const triggerLabels: Record<ReminderTrigger['kind'], string> = {
   gift: '答谢',
   entry: '进场分析',
   welcome: '新观众',
+  heat: '热度变化',
 };
 
 /**

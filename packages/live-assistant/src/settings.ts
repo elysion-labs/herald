@@ -33,6 +33,24 @@ export const assistantSettings = z.object({
       minPayLevel: payLevel,
     })
     .default({ enabled: true, withMemory: true, guard: true, minBadgeLevel: 20, minPayLevel: 30 }),
+  /** 热度变化：刚结束的一分钟弹幕量相对之前平均值突增或下滑时提醒。 */
+  heat: z
+    .object({
+      enabled,
+      windowMinutes: z.number().int().min(3).max(30),
+      spikeRatio: z.number().min(1.2).max(10),
+      dropRatio: z.number().min(0).max(0.9),
+      minPerMinute: z.number().int().min(1).max(1000),
+      cooldownMinutes: z.number().int().min(1).max(60),
+    })
+    .default({
+      enabled: true,
+      windowMinutes: 10,
+      spikeRatio: 2,
+      dropRatio: 0.4,
+      minPerMinute: 5,
+      cooldownMinutes: 5,
+    }),
   /** 新观众第一次发言时给出欢迎话术。 */
   welcome: z.object({ enabled }).default({ enabled: false }),
   /** 开播时推荐本场话题。 */
@@ -55,6 +73,14 @@ export const defaultAssistantSettings: AssistantSettings = {
   gifts: { enabled: true, minValue: 10, superChat: true, guard: true },
   entry: { enabled: true, withMemory: true, guard: true, minBadgeLevel: 20, minPayLevel: 30 },
   welcome: { enabled: false },
+  heat: {
+    enabled: true,
+    windowMinutes: 10,
+    spikeRatio: 2,
+    dropRatio: 0.4,
+    minPerMinute: 5,
+    cooldownMinutes: 5,
+  },
   cooldownSeconds: 60,
 };
 
@@ -89,6 +115,12 @@ export const reminderTrigger = z.discriminatedUnion('kind', [
     viewerName: z.string().nullable(),
     identity: z.string(),
     facts: z.string().array(),
+  }),
+  z.object({
+    kind: z.literal('heat'),
+    direction: z.enum(['up', 'down']),
+    current: z.number(),
+    baseline: z.number(),
   }),
   z.object({
     kind: z.literal('welcome'),
@@ -127,6 +159,8 @@ const summaries: Summary = {
   gift: trigger => `${trigger.viewerName ?? '观众'} ${trigger.item}`,
   entry: trigger => `${trigger.viewerName ?? trigger.viewerId} 进场 · ${trigger.identity}`,
   welcome: trigger => `${trigger.viewerName ?? trigger.viewerId}：${trigger.text}`,
+  heat: trigger =>
+    `弹幕${trigger.direction === 'up' ? '升到' : '降到'} ${trigger.current} 条/分（之前平均 ${trigger.baseline}）`,
 };
 
 /** 聊天里提醒条目的一行摘要。 */

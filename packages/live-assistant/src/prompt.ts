@@ -31,6 +31,10 @@ const reasons: Reason = {
     ].join(''),
   welcome: trigger =>
     `新观众 ${name(trigger.viewerName, trigger.viewerId)}（UID ${trigger.viewerId}）第一次发言：「${trigger.text}」。给主播一句欢迎并接住话题的回应。`,
+  heat: trigger =>
+    trigger.direction === 'up'
+      ? `弹幕量突然升到每分钟 ${trigger.current} 条（之前平均 ${trigger.baseline} 条）。用 query_danmaku 看看观众在聊什么，建议主播怎么顺势展开，给一句可以直接接的话。`
+      : `弹幕量降到每分钟 ${trigger.current} 条（之前平均 ${trigger.baseline} 条），热度在下滑。在冷场之前给主播 1~2 个换话题或拉互动的建议。`,
   liveStart: () =>
     [
       '直播刚刚开始，给主播推荐本场可以聊的话题。',

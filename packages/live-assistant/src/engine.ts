@@ -2,6 +2,8 @@ import { EventEmitter, on } from 'node:events';
 
 import type { LiveActivity, LivePlatform } from '@herald/live';
 
+import { createHeatState, heatTrigger, recordHeat, resetHeat } from './heat.ts';
+import type { HeatState } from './heat.ts';
 import { entryQualifies, giftTrigger, identityOf } from './interactions.ts';
 import type { AssistantSettings, ReminderTrigger } from './settings.ts';
 
@@ -61,6 +63,7 @@ interface PlatformState {
   entered: Set<string>;
   /** 本场已发过言的观众。 */
   spoken: Set<string>;
+  heat: HeatState;
 }
 
 const tickInterval = 5000;
@@ -86,6 +89,7 @@ export function createLiveAssistant<Turns>(host: AssistantHost<Turns>) {
         live: false,
         entered: new Set(),
         spoken: new Set(),
+        heat: createHeatState(),
       },
     ]),
   );
@@ -181,6 +185,7 @@ export function createLiveAssistant<Turns>(host: AssistantHost<Turns>) {
     state.quietSince = message.receivedAt;
     state.silenceFired = false;
     state.sincePeriodic += 1;
+    recordHeat(state.heat, message.receivedAt);
 
     if (!target(message.platform)) {
       return;
@@ -294,6 +299,7 @@ export function createLiveAssistant<Turns>(host: AssistantHost<Turns>) {
       state.silenceFired = false;
       state.entered.clear();
       state.spoken.clear();
+      resetHeat(state.heat);
     }
 
     state.live = live;
@@ -306,6 +312,14 @@ export function createLiveAssistant<Turns>(host: AssistantHost<Turns>) {
       quiet >= config.silence.seconds * 1000
     ) {
       state.silenceFired = fire(platform, { kind: 'silence', seconds: Math.round(quiet / 1000) });
+    }
+  }
+
+  function checkHeat(platform: LivePlatform, state: PlatformState, config: Config, now: number) {
+    const trigger = state.live ? heatTrigger(state.heat, config.heat, now) : undefined;
+
+    if (trigger) {
+      fire(platform, trigger);
     }
   }
 
@@ -346,6 +360,7 @@ export function createLiveAssistant<Turns>(host: AssistantHost<Turns>) {
 
       checkSilence(platform, state, config, now);
       checkPeriodic(platform, state, config, now);
+      checkHeat(platform, state, config, now);
     }
   }
 
