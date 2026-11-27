@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { EventEmitter, on } from 'node:events';
 
-import { createLiveChat, fetchLiveStatus } from '@herald/live';
-import type { LiveChatMessage, LivePlatform, LiveStatus } from '@herald/live';
+import { createLiveChat } from '@herald/live';
+import type { LiveActivity, LiveChatMessage, LivePlatform } from '@herald/live';
 import { ORPCError } from '@orpc/server';
 import { eq } from 'drizzle-orm';
 
@@ -17,13 +17,7 @@ interface RoomConnection {
   error?: string;
   received: number;
   recent: LiveMessage[];
-  /** 是否在播：连接时查询一次，之后定时轮询，B 站另有开播 / 下播事件即时更新。 */
-  live: LiveStatus;
-  poll?: ReturnType<typeof setInterval>;
-  controller: AbortController;
 }
-
-const livePollInterval = 60 * 1000;
 
 export type LiveMessage = LiveChatMessage & { evidenceId: string };
 
@@ -73,32 +67,12 @@ export function openLiveRooms(db: Database) {
   const connections = new Map<LivePlatform, RoomConnection>();
 
   /** 去重后的新弹幕广播：实时弹幕浮窗与自动提醒都订阅它。 */
-  const events = new EventEmitter<{
-    message: [LiveMessage];
-    live: [LivePlatform, 'live' | 'offline'];
-  }>();
-
-  /** 更新在播状态；确定的状态发生变化时广播开播 / 下播。 */
-  function setLive(platform: LivePlatform, connection: RoomConnection, live: LiveStatus) {
-    if (live === 'unknown' || live === connection.live) {
-      return;
-    }
-
-    const previous = connection.live;
-    connection.live = live;
-
-    if (connections.get(platform) === connection && (previous !== 'unknown' || live === 'live')) {
-      events.emit('live', platform, live);
-    }
-  }
-
+  const events = new EventEmitter<{ message: [LiveMessage]; activity: [LiveActivity] }>();
   events.setMaxListeners(0);
 
   function stop(platform: LivePlatform) {
     const previous = connections.get(platform);
     connections.delete(platform);
-    previous?.controller.abort();
-    clearInterval(previous?.poll);
     void previous?.client?.dispose().catch(() => undefined);
   }
 
@@ -122,31 +96,8 @@ export function openLiveRooms(db: Database) {
       return;
     }
 
-    const connection: RoomConnection = {
-      received: 0,
-      recent: [],
-      live: 'unknown',
-      controller: new AbortController(),
-    };
-
+    const connection: RoomConnection = { received: 0, recent: [] };
     connections.set(platform, connection);
-
-    const { signal } = connection.controller;
-
-    const refreshLive = async () => {
-      const cookie = await readLiveCookies(platform, signal).catch(() => null);
-
-      const live = await fetchLiveStatus(platform, roomId, { cookie, signal }).catch(
-        () => 'unknown' as const,
-      );
-
-      if (!signal.aborted) {
-        setLive(platform, connection, live);
-      }
-    };
-
-    void refreshLive();
-    connection.poll = setInterval(() => void refreshLive(), livePollInterval);
 
     try {
       const client = createLiveChat({
@@ -156,8 +107,10 @@ export function openLiveRooms(db: Database) {
         onError(error) {
           connection.error = explainFailure(error);
         },
-        onLiveStatus(live) {
-          setLive(platform, connection, live);
+        onActivity(activity) {
+          if (connections.get(platform) === connection) {
+            events.emit('activity', activity);
+          }
         },
         onMessage(message) {
           if (connections.get(platform) !== connection) {
@@ -185,11 +138,11 @@ export function openLiveRooms(db: Database) {
   return {
     status,
     connect,
-    /** 开播 / 下播事件；首次确认在播也算开播（例如打开应用时已在直播）。 */
-    onLiveChange(listener: (platform: LivePlatform, live: 'live' | 'offline') => void) {
-      events.on('live', listener);
+    /** 礼物、醒目留言、上舰、进场、关注等互动事件。 */
+    onActivity(listener: (activity: LiveActivity) => void) {
+      events.on('activity', listener);
 
-      return () => events.off('live', listener);
+      return () => events.off('activity', listener);
     },
     onMessage(listener: (message: LiveMessage) => void) {
       events.on('message', listener);
@@ -256,7 +209,6 @@ function connectionStatus(connection: RoomConnection | undefined) {
     state,
     error: state === 'connected' ? undefined : connection?.error,
     received: connection?.received ?? 0,
-    live: connection?.live ?? 'unknown',
   };
 }
 

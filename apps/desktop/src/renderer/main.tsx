@@ -87,6 +87,7 @@ import {
 import { attachmentPattern } from '../shared/attachments.ts';
 import { platformLabels, platforms } from '../shared/platforms.ts';
 import { AgentCapabilitySettings, SystemPromptSettings } from './agent-settings.tsx';
+import { LiveControl } from './assistant-mode.tsx';
 import type { Conversation } from './assistant-mode.tsx';
 import { AssistantSettingsPanel } from './assistant-settings.tsx';
 import { BrowserPane } from './browser-pane.tsx';
@@ -392,11 +393,8 @@ function AssistantItem({
 }) {
   const { data } = useRoom(platform);
   const selected = Boolean(conversation) && conversation?.id === current;
-  const liveLabels = { live: ' · 直播中', offline: ' · 未开播', unknown: '' };
-
-  const detail = data
-    ? `${data.roomId} · ${statusLabels[data.state]}${liveLabels[data.live]}`
-    : '未绑定直播间';
+  const liveLabel = conversation?.liveStartedAt ? ' · 直播中' : '';
+  const detail = data ? `${data.roomId} · ${statusLabels[data.state]}${liveLabel}` : '未绑定直播间';
 
   const body = (
     <>
@@ -562,6 +560,7 @@ function ConversationTitle() {
         {conversation.title}
       </h1>
       {conversation.platform && <LiveBadge platform={conversation.platform} />}
+      {conversation.mode === 'assistant' && <LiveControl conversation={conversation} />}
     </div>
   );
 }

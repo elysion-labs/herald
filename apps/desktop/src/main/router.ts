@@ -76,7 +76,8 @@ export function createRouter(
         .filter(record => record.viewerId === viewerId)
         .map(record => record.fact),
     roomConnected: platform => workspace.rooms.status(platform)?.state === 'connected',
-    roomLive: platform => workspace.rooms.status(platform)?.live ?? 'unknown',
+    roomLive: platform =>
+      workspace.assistantConversation(platform)?.liveStartedAt ? 'live' : 'offline',
     onMessage: listener => workspace.rooms.onMessage(listener),
   });
 
@@ -143,6 +144,18 @@ export function createRouter(
       remove: os
         .input(memoryRecord)
         .handler(({ input }) => workspace.memory.remove(input.scope, input.id)),
+    },
+    live: {
+      /** 主播手动开播：当前助手会话成为本场，并推荐话题。 */
+      start: os.input(platform).handler(async ({ input }) => {
+        await liveSessions.start(input);
+
+        return workspace.assistantConversation(input);
+      }),
+      /** 主播手动下播：后台复盘后本场转为普通会话。 */
+      end: os.input(platform).handler(({ input }) => {
+        void liveSessions.end(input);
+      }),
     },
     assistant: {
       settings: os.handler(() => workspace.settings.assistant()),

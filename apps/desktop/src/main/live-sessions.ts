@@ -7,7 +7,7 @@ type Workspace = ReturnType<typeof openWorkspace>;
 type Assistant = Pick<ReturnType<typeof createLiveAssistant>, 'run'>;
 
 /**
- * 按直播场次组织助手会话：开播时当前助手会话成为本场会话并推荐话题；
+ * 按直播场次组织助手会话（由主播手动开播 / 下播）：开播时当前助手会话成为本场会话并推荐话题；
  * 下播时先复盘，再把本场转为普通会话（标题为开播时间），并开好下一场。
  */
 export function createLiveSessions(workspace: Workspace, assistant: Assistant) {
@@ -17,7 +17,7 @@ export function createLiveSessions(workspace: Workspace, assistant: Assistant) {
     const before = workspace.assistantConversation(platform);
     const conversation = workspace.beginLiveSession(platform);
 
-    // 应用在直播中途重启时，本场已经开始过，不再重复推荐。
+    // 已经开播过的场次不再重复推荐。
     if (
       !before?.liveStartedAt &&
       conversation?.liveStartedAt &&
@@ -53,11 +53,5 @@ export function createLiveSessions(workspace: Workspace, assistant: Assistant) {
     }
   }
 
-  const unsubscribe = workspace.rooms.onLiveChange((platform, live) => {
-    const task = live === 'live' ? start(platform) : end(platform);
-
-    task.catch((error: unknown) => console.error('直播场次处理失败', platform, error));
-  });
-
-  return { start, end, dispose: unsubscribe };
+  return { start, end };
 }

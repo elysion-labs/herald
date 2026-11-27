@@ -1,6 +1,10 @@
-import { describeTrigger } from '@herald/live-assistant/settings';
+import { describeTrigger, liveTime } from '@herald/live-assistant/settings';
 import type { ReminderTrigger } from '@herald/live-assistant/settings';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { Radio, Square } from 'lucide-react';
 import { useEffect, useState } from 'react';
+
+import { Button } from '@/components/ui/button';
 
 import { rpc } from './rpc.ts';
 
@@ -80,5 +84,64 @@ function ReminderCards({ cards }: { cards: ReminderCard[] }) {
         </li>
       ))}
     </ol>
+  );
+}
+
+/** 助手会话顶栏的开播 / 下播按钮；开播推荐话题，下播后台复盘并转入下一场。 */
+export function LiveControl({ conversation }: { conversation: Conversation }) {
+  const client = useQueryClient();
+  const platform = conversation.platform;
+
+  const toggle = useMutation({
+    mutationFn: async () => {
+      if (!platform) {
+        return;
+      }
+
+      if (conversation.liveStartedAt) {
+        await rpc.live.end(platform);
+      } else {
+        await rpc.live.start(platform);
+      }
+    },
+    onSettled: () => client.invalidateQueries({ queryKey: ['conversations'] }),
+  });
+
+  if (!platform) {
+    return null;
+  }
+
+  if (!conversation.liveStartedAt) {
+    return (
+      <Button
+        size="sm"
+        variant="secondary"
+        className="shrink-0"
+        disabled={toggle.isPending}
+        title="开始本场直播：推荐话题，并开始冷场等提醒"
+        onClick={() => toggle.mutate()}
+      >
+        <Radio data-icon="inline-start" />
+        开播
+      </Button>
+    );
+  }
+
+  return (
+    <span className="flex shrink-0 items-center gap-1.5">
+      <span className="text-muted-foreground text-xs tabular-nums">
+        直播中 · {liveTime(conversation.liveStartedAt)} 开播
+      </span>
+      <Button
+        size="sm"
+        variant="ghost"
+        disabled={toggle.isPending}
+        title="结束本场：复盘后转为历史会话，并开始下一场"
+        onClick={() => toggle.mutate()}
+      >
+        <Square data-icon="inline-start" />
+        下播
+      </Button>
+    </span>
   );
 }
