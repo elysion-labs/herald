@@ -25,6 +25,9 @@ const triggerLabels: Record<ReminderTrigger['kind'], string> = {
   periodic: '弹幕分析',
   liveStart: '开播话题',
   liveEnd: '下播复盘',
+  gift: '答谢',
+  entry: '进场分析',
+  welcome: '新观众',
 };
 
 /**

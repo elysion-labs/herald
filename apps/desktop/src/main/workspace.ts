@@ -25,6 +25,7 @@ import { openAppSettings } from './app-settings.ts';
 import { openDatabase, schema } from './db/index.ts';
 import { openLiveRooms } from './live-rooms.ts';
 import { openModelSettings } from './model-settings.ts';
+import { createViewerProfileTool } from './viewer-tool.ts';
 
 type Conversation = typeof schema.conversations.$inferSelect;
 
@@ -407,7 +408,12 @@ export function openWorkspace(directory: string) {
       modelRuntime,
       model,
       thinking,
-      tools: [...(tools ?? []), ...memoryTools, createDanmakuTool(danmaku, conversation.platform)],
+      tools: [
+        ...(tools ?? []),
+        ...memoryTools,
+        createDanmakuTool(danmaku, conversation.platform),
+        createViewerProfileTool(conversation.platform),
+      ],
       onTitle: canRename(conversation) ? title => rename(title, conversation.id) : undefined,
       // 普通会话可以跨平台读取历史会话。
       historyScopes: conversation.platform ? [] : platforms,

@@ -1,7 +1,8 @@
 import { EventEmitter, on } from 'node:events';
 
-import type { LivePlatform } from '@herald/live';
+import type { LiveActivity, LivePlatform } from '@herald/live';
 
+import { entryQualifies, giftTrigger, identityOf } from './interactions.ts';
 import type { AssistantSettings, ReminderTrigger } from './settings.ts';
 
 const platforms = ['bilibili', 'douyin'] as const satisfies readonly LivePlatform[];
@@ -33,6 +34,10 @@ export interface AssistantHost<Turns> {
   /** 直播间是否在播；冷场提醒只在确认直播中时触发。 */
   roomLive: (platform: LivePlatform) => 'live' | 'offline' | 'unknown';
   onMessage: (listener: (message: AssistantMessage) => void) => () => void;
+  /** 礼物、醒目留言、上舰、进场等互动。 */
+  onActivity: (listener: (activity: LiveActivity) => void) => () => void;
+  /** 该观众在本场开播之前是否发过弹幕。 */
+  viewerSeenBefore: (platform: LivePlatform, viewerId: string) => boolean;
 }
 
 export type AssistantEvent<Turns> =
@@ -52,6 +57,10 @@ interface PlatformState {
   viewerCooldown: Map<string, number>;
   /** 上一次检查时是否在播，用于开播时重置冷场计时。 */
   live: boolean;
+  /** 本场已分析过进场的观众。 */
+  entered: Set<string>;
+  /** 本场已发过言的观众。 */
+  spoken: Set<string>;
 }
 
 const tickInterval = 5000;
@@ -75,6 +84,8 @@ export function createLiveAssistant<Turns>(host: AssistantHost<Turns>) {
         sincePeriodic: 0,
         viewerCooldown: new Map(),
         live: false,
+        entered: new Set(),
+        spoken: new Set(),
       },
     ]),
   );
@@ -82,13 +93,15 @@ export function createLiveAssistant<Turns>(host: AssistantHost<Turns>) {
   /** 提醒只发给该平台的助手会话。 */
   const target = (platform: LivePlatform) => host.assistantConversation(platform);
 
-  function fire(platform: LivePlatform, trigger: ReminderTrigger) {
+  /** urgent：答谢等时效性强的提醒，不受全局提醒间隔限制。 */
+  function fire(platform: LivePlatform, trigger: ReminderTrigger, urgent = false) {
     const state = states.get(platform);
     const conversationId = target(platform);
     const now = Date.now();
     const { cooldownSeconds } = host.settings();
+    const cooling = !urgent && now - (state?.lastTriggerAt ?? 0) < cooldownSeconds * 1000;
 
-    if (!state || !conversationId || now - state.lastTriggerAt < cooldownSeconds * 1000) {
+    if (!state || !conversationId || cooling) {
       return false;
     }
 
@@ -174,6 +187,12 @@ export function createLiveAssistant<Turns>(host: AssistantHost<Turns>) {
     }
 
     const config = host.settings();
+    const welcome = welcomeTrigger(message, state, config);
+
+    if (welcome && fire(message.platform, welcome)) {
+      return;
+    }
+
     const viewer = config.memoryViewers.enabled ? viewerTrigger(message, state) : undefined;
 
     if (viewer && fire(message.platform, viewer)) {
@@ -196,6 +215,76 @@ export function createLiveAssistant<Turns>(host: AssistantHost<Turns>) {
 
   type Config = AssistantSettings;
 
+  /** 新观众本场第一次发言，且之前没有弹幕和记忆时，给出欢迎话术。 */
+  function welcomeTrigger(
+    message: AssistantMessage,
+    state: PlatformState,
+    config: Config,
+  ): ReminderTrigger | undefined {
+    const viewerId = message.authorId;
+
+    if (!viewerId || state.spoken.has(viewerId)) {
+      return undefined;
+    }
+
+    state.spoken.add(viewerId);
+
+    const fresh =
+      config.welcome.enabled &&
+      host.roomLive(message.platform) === 'live' &&
+      !host.viewerFacts(message.platform, viewerId).length &&
+      !host.viewerSeenBefore(message.platform, viewerId);
+
+    return fresh
+      ? { kind: 'welcome', viewerId, viewerName: message.authorName, text: message.text }
+      : undefined;
+  }
+
+  /** 进场分析：满足条件的观众本场第一次进场时触发。 */
+  function onEntry(activity: LiveActivity, state: PlatformState, config: Config) {
+    const viewerId = activity.viewer.id;
+
+    if (!viewerId || !config.entry.enabled || state.entered.has(viewerId)) {
+      return;
+    }
+
+    state.entered.add(viewerId);
+    const facts = host.viewerFacts(activity.platform, viewerId).slice(0, 8);
+
+    if (entryQualifies(activity.viewer, facts.length > 0, config.entry)) {
+      fire(activity.platform, {
+        kind: 'entry',
+        viewerId,
+        viewerName: activity.viewer.name,
+        identity: identityOf(activity.viewer),
+        facts,
+      });
+    }
+  }
+
+  /** 互动事件只在已开播的场次里处理。 */
+  function onActivity(activity: LiveActivity) {
+    const state = states.get(activity.platform);
+
+    if (!state || !target(activity.platform) || host.roomLive(activity.platform) !== 'live') {
+      return;
+    }
+
+    const config = host.settings();
+
+    if (activity.kind === 'entry') {
+      onEntry(activity, state, config);
+
+      return;
+    }
+
+    const trigger = giftTrigger(activity, config.gifts);
+
+    if (trigger) {
+      fire(activity.platform, trigger, true);
+    }
+  }
+
   /** 冷场提醒：只在确认直播中时计时；刚开播时从开播时刻重新计时。 */
   function checkSilence(platform: LivePlatform, state: PlatformState, config: Config, now: number) {
     const live = host.roomLive(platform) === 'live';
@@ -203,6 +292,8 @@ export function createLiveAssistant<Turns>(host: AssistantHost<Turns>) {
     if (live && !state.live) {
       state.quietSince = now;
       state.silenceFired = false;
+      state.entered.clear();
+      state.spoken.clear();
     }
 
     state.live = live;
@@ -259,6 +350,7 @@ export function createLiveAssistant<Turns>(host: AssistantHost<Turns>) {
   }
 
   const unsubscribe = host.onMessage(onMessage);
+  const unsubscribeActivity = host.onActivity(onActivity);
   const timer = setInterval(tick, tickInterval);
 
   return {
@@ -291,6 +383,7 @@ export function createLiveAssistant<Turns>(host: AssistantHost<Turns>) {
     dispose() {
       clearInterval(timer);
       unsubscribe();
+      unsubscribeActivity();
     },
   };
 }

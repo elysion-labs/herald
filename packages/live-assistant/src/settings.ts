@@ -6,6 +6,10 @@ const periodicMinutes = z.number().int().min(1).max(60);
 /** 新增字段带默认值，旧版本保存的设置仍能解析。 */
 const viewerCooldownMinutes = z.number().int().min(1).max(240).default(10);
 const periodicMinMessages = z.number().int().min(1).max(500).default(3);
+const giftValue = z.number().min(0).max(100_000);
+/** 0 表示不按这项筛选。 */
+const badgeLevel = z.number().int().min(0).max(40);
+const payLevel = z.number().int().min(0).max(80);
 const keyword = z.string().trim().min(1).max(32);
 const keywordList = z.array(keyword).max(50);
 
@@ -15,6 +19,22 @@ export const assistantSettings = z.object({
   memoryViewers: z.object({ enabled, cooldownMinutes: viewerCooldownMinutes }),
   keywords: z.object({ enabled, words: keywordList }),
   periodic: z.object({ enabled, minutes: periodicMinutes, minMessages: periodicMinMessages }),
+  /** 礼物、醒目留言、上舰答谢：礼物达到金额（元）才提醒。 */
+  gifts: z
+    .object({ enabled, minValue: giftValue, superChat: z.boolean(), guard: z.boolean() })
+    .default({ enabled: true, minValue: 10, superChat: true, guard: true }),
+  /** 进场分析：满足任一条件的观众进场时，判断是否值得互动。 */
+  entry: z
+    .object({
+      enabled,
+      withMemory: z.boolean(),
+      guard: z.boolean(),
+      minBadgeLevel: badgeLevel,
+      minPayLevel: payLevel,
+    })
+    .default({ enabled: true, withMemory: true, guard: true, minBadgeLevel: 20, minPayLevel: 30 }),
+  /** 新观众第一次发言时给出欢迎话术。 */
+  welcome: z.object({ enabled }).default({ enabled: false }),
   /** 开播时推荐本场话题。 */
   liveStart: z.object({ enabled }).default({ enabled: true }),
   /** 下播后自动复盘。 */
@@ -32,6 +52,9 @@ export const defaultAssistantSettings: AssistantSettings = {
   periodic: { enabled: false, minutes: 5, minMessages: 3 },
   liveStart: { enabled: true },
   liveEnd: { enabled: true },
+  gifts: { enabled: true, minValue: 10, superChat: true, guard: true },
+  entry: { enabled: true, withMemory: true, guard: true, minBadgeLevel: 20, minPayLevel: 30 },
+  welcome: { enabled: false },
   cooldownSeconds: 60,
 };
 
@@ -53,11 +76,31 @@ export const reminderTrigger = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('periodic'), minutes: z.number(), count: z.number() }),
   z.object({ kind: z.literal('liveStart'), startedAt: z.number() }),
   z.object({ kind: z.literal('liveEnd'), startedAt: z.number(), endedAt: z.number() }),
+  z.object({
+    kind: z.literal('gift'),
+    viewerId: z.string().nullable(),
+    viewerName: z.string().nullable(),
+    item: z.string(),
+    value: z.number().nullable(),
+  }),
+  z.object({
+    kind: z.literal('entry'),
+    viewerId: z.string(),
+    viewerName: z.string().nullable(),
+    identity: z.string(),
+    facts: z.string().array(),
+  }),
+  z.object({
+    kind: z.literal('welcome'),
+    viewerId: z.string(),
+    viewerName: z.string().nullable(),
+    text: z.string(),
+  }),
 ]);
 
-/** 开播推荐与下播复盘必须给出结果，不能回复 SKIP。 */
+/** 开播推荐、下播复盘与礼物答谢必须给出结果，不能回复 SKIP。 */
 export function isLifecycleTrigger(trigger: ReminderTrigger) {
-  return trigger.kind === 'liveStart' || trigger.kind === 'liveEnd';
+  return trigger.kind === 'liveStart' || trigger.kind === 'liveEnd' || trigger.kind === 'gift';
 }
 
 /** 直播场次的显示时间，例如 11-25 20:03。 */
@@ -70,31 +113,25 @@ export function liveTime(timestamp: number) {
 
 export type ReminderTrigger = z.infer<typeof reminderTrigger>;
 
+type Summary = {
+  [K in ReminderTrigger['kind']]: (trigger: Extract<ReminderTrigger, { kind: K }>) => string;
+};
+
+const summaries: Summary = {
+  silence: trigger => `冷场 ${trigger.seconds} 秒`,
+  viewer: trigger => `${trigger.viewerName ?? trigger.viewerId} 发言：${trigger.text}`,
+  keyword: trigger => `关注词「${trigger.keyword}」：${trigger.text}`,
+  periodic: trigger => `近 ${trigger.minutes} 分钟 ${trigger.count} 条弹幕`,
+  liveStart: trigger => `${liveTime(trigger.startedAt)} 开播`,
+  liveEnd: trigger => `${liveTime(trigger.startedAt)} 至 ${liveTime(trigger.endedAt)}`,
+  gift: trigger => `${trigger.viewerName ?? '观众'} ${trigger.item}`,
+  entry: trigger => `${trigger.viewerName ?? trigger.viewerId} 进场 · ${trigger.identity}`,
+  welcome: trigger => `${trigger.viewerName ?? trigger.viewerId}：${trigger.text}`,
+};
+
 /** 聊天里提醒条目的一行摘要。 */
 export function describeTrigger(trigger: ReminderTrigger) {
-  switch (trigger.kind) {
-    case 'silence': {
-      return `冷场 ${trigger.seconds} 秒`;
-    }
+  const summarize = summaries[trigger.kind] as (value: ReminderTrigger) => string;
 
-    case 'viewer': {
-      return `${trigger.viewerName ?? trigger.viewerId} 发言：${trigger.text}`;
-    }
-
-    case 'keyword': {
-      return `关注词「${trigger.keyword}」：${trigger.text}`;
-    }
-
-    case 'periodic': {
-      return `近 ${trigger.minutes} 分钟 ${trigger.count} 条弹幕`;
-    }
-
-    case 'liveStart': {
-      return `${liveTime(trigger.startedAt)} 开播`;
-    }
-
-    case 'liveEnd': {
-      return `${liveTime(trigger.startedAt)} 至 ${liveTime(trigger.endedAt)}`;
-    }
-  }
+  return summarize(trigger);
 }

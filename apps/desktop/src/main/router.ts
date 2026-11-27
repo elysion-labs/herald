@@ -79,6 +79,15 @@ export function createRouter(
     roomLive: platform =>
       workspace.assistantConversation(platform)?.liveStartedAt ? 'live' : 'offline',
     onMessage: listener => workspace.rooms.onMessage(listener),
+    onActivity: listener => workspace.rooms.onActivity(listener),
+    viewerSeenBefore: (platform, viewerId) => {
+      const before = workspace.assistantConversation(platform)?.liveStartedAt ?? Date.now();
+
+      return (
+        workspace.danmaku.query({ platform, viewer: viewerId, until: before - 1, limit: 1 })
+          .length > 0
+      );
+    },
   });
 
   const liveSessions = createLiveSessions(workspace, assistant);

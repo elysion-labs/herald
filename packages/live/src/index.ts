@@ -194,6 +194,43 @@ async function douyinProfile(
   };
 }
 
+/** 观众的公开主页资料。 */
+export interface ViewerProfile {
+  name: string | null;
+  sign: string | null;
+  level: number | null;
+  followers: number | null;
+  official: string | null;
+}
+
+/** 观众主页资料；B 站读用户卡片接口，抖音暂不支持，返回 null。 */
+export async function fetchViewerProfile(
+  platform: LivePlatform,
+  viewerId: string,
+  { signal }: { signal?: AbortSignal } = {},
+): Promise<ViewerProfile | null> {
+  if (platform !== 'bilibili') {
+    return null;
+  }
+
+  const body = await getJson(
+    `https://api.bilibili.com/x/web-interface/card?mid=${encodeURIComponent(viewerId)}`,
+    { headers: { 'user-agent': userAgent, referer: 'https://www.bilibili.com/' }, signal },
+  );
+
+  const card = (body.data?.card ?? {}) as Record<string, unknown>;
+  const level = (card.level_info ?? {}) as Record<string, unknown>;
+  const official = (card.Official ?? {}) as Record<string, unknown>;
+
+  return {
+    name: field(card.name),
+    sign: field(card.sign)?.slice(0, 200) ?? null,
+    level: typeof level.current_level === 'number' ? level.current_level : null,
+    followers: typeof card.fans === 'number' ? card.fans : null,
+    official: field(official.title),
+  };
+}
+
 /** 读取主播与直播间资料；失败时抛出错误。 */
 export function fetchRoomProfile(
   platform: LivePlatform,
