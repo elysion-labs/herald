@@ -7,20 +7,16 @@ import { rpcPortMessage } from '../shared/platforms.ts';
 import { createWorkspaceBrowser } from './browser.ts';
 import { attachLoginPortals, migrateWebLogin } from './login.ts';
 import { createRouter } from './router.ts';
-import { openWorkspace } from './workspace.ts';
+import { openWorkspaces } from './workspaces.ts';
 
 async function start() {
   await app.whenReady();
   Menu.setApplicationMenu(null);
 
   const directory = app.getPath('userData');
-  const workspace = openWorkspace(directory);
   await migrateWebLogin(directory).catch(() => console.warn('无法迁移旧版网页登录状态'));
-  workspace.rooms.start();
-  app.once('before-quit', () => {
-    workspace.rooms.stop();
-    workspace.danmaku.dispose();
-  });
+  const workspaces = openWorkspaces(directory);
+  app.once('before-quit', () => workspaces.dispose());
 
   function createWindow() {
     const window = new BrowserWindow({
@@ -44,7 +40,8 @@ async function start() {
     const contents = window.webContents;
     attachLoginPortals(contents);
     const browser = createWorkspaceBrowser(window);
-    const handler = new RPCHandler(createRouter(workspace, browser));
+    const { router, dispose } = createRouter(workspaces, browser);
+    const handler = new RPCHandler(router);
     const ports = new Set<Electron.MessagePortMain>();
 
     const bindPort = (event: Electron.IpcMainEvent) => {
@@ -65,6 +62,7 @@ async function start() {
 
     ipcMain.on(rpcPortMessage, bindPort);
     window.on('closed', () => {
+      dispose();
       ipcMain.off(rpcPortMessage, bindPort);
 
       for (const port of ports) {

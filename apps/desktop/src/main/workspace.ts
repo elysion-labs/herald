@@ -4,58 +4,94 @@ import { join } from 'node:path';
 import { createConversationRuntime } from '@herald/agent';
 import type { AgentTools } from '@herald/agent';
 import { openDanmakuStore } from '@herald/danmaku';
+import { assistantSettings } from '@herald/live-assistant/settings';
+import type { AssistantSettings } from '@herald/live-assistant/settings';
 import { openMemoryLibrary } from '@herald/memory-tool';
+import { eq } from 'drizzle-orm';
 
 import type { Attachment } from '../shared/attachments.ts';
 import type { ChatModelChoice } from '../shared/model-settings.ts';
-import { platforms } from '../shared/platforms.ts';
-import { openAppSettings } from './app-settings.ts';
+import type { openAppSettings } from './app-settings.ts';
 import { prepareConversationInput } from './conversation-input.ts';
 import { takeDanmaku } from './danmaku-cursor.ts';
-import { openDatabase } from './db/index.ts';
+import { schema } from './db/index.ts';
+import type { Database } from './db/index.ts';
 import { openLiveRooms } from './live-rooms.ts';
 import { openLiveSessionIndex } from './live-session-index.ts';
-import { openModelSettings } from './model-settings.ts';
+import type { openModelSettings } from './model-settings.ts';
 import { openSessionIndex } from './session-index.ts';
 
 export type { ConversationMode } from './session-index.ts';
 
-export function openWorkspace(directory: string) {
-  mkdirSync(directory, { recursive: true });
-  mkdirSync(join(directory, 'agent'), { recursive: true });
-  const db = openDatabase(directory);
-  const models = openModelSettings(db, directory);
-  const settings = openAppSettings(db, directory);
-  const memory = openMemoryLibrary(join(directory, 'memory'));
-  const rooms = openLiveRooms(db);
-  const danmaku = openDanmakuStore(db);
-  rooms.onMessage(message => danmaku.add(message));
+interface WorkspaceOptions {
+  db: Database;
+  id: string;
+  directory: string;
+  agentDir: string;
+  settings: ReturnType<typeof openAppSettings>;
+  models: ReturnType<typeof openModelSettings>;
+}
 
-  const sessions = openSessionIndex(db, directory);
-  const liveSessions = openLiveSessionIndex(db, sessions);
+export function openWorkspace({ db, id, directory, agentDir, settings, models }: WorkspaceOptions) {
+  mkdirSync(directory, { recursive: true });
+  const memory = openMemoryLibrary(join(directory, 'memory'));
+  const rooms = openLiveRooms(db, id);
+  const danmaku = openDanmakuStore(db, id);
+  const unsubscribe = rooms.onMessage(message => danmaku.add(message));
+  const { workspaces } = schema;
+
+  const sessions = openSessionIndex(db, directory, id);
+  const liveSessions = openLiveSessionIndex(db, id, sessions, danmaku);
 
   const runtime = createConversationRuntime({
     store: sessions.store,
+    agentDir,
     conversation: sessions.conversation,
     rename: sessions.rename,
-    currentModel: id => models.current(id),
+    currentModel: conversationId => models.current(conversationId),
     agentSettings: settings.agent,
     memory,
     danmaku,
-    platforms,
+    platforms: rooms.boundPlatforms,
     room: platform => rooms.status(platform) ?? undefined,
-    takeDanmaku: id => takeDanmaku(db, danmaku, sessions.conversation(id)),
+    takeDanmaku: conversationId =>
+      takeDanmaku(db, danmaku, sessions.conversation(conversationId), rooms.boundPlatforms()),
   });
 
+  function getAssistantSettings() {
+    return assistantSettings.parse(
+      db
+        .select({ assistant: workspaces.assistant })
+        .from(workspaces)
+        .where(eq(workspaces.id, id))
+        .get()?.assistant,
+    );
+  }
+
   return {
-    models,
+    id,
     memory,
     rooms,
     danmaku,
-    settings,
     ...sessions,
     ...liveSessions,
     ...runtime,
+    getAssistantSettings,
+    saveAssistantSettings(input: Partial<AssistantSettings>) {
+      const assistant = assistantSettings.parse({ ...getAssistantSettings(), ...input });
+      db.update(workspaces).set({ assistant }).where(eq(workspaces.id, id)).run();
+
+      return assistant;
+    },
+    list() {
+      const bound = rooms.boundPlatforms();
+
+      return sessions
+        .list()
+        .map(row =>
+          row.mode === 'assistant' && !row.liveStartedAt ? { ...row, livePlatforms: bound } : row,
+        );
+    },
     setModelChoice(id: string, choice: ChatModelChoice) {
       sessions.conversation(id);
 
@@ -70,6 +106,12 @@ export function openWorkspace(directory: string) {
       sessions.conversation(id);
 
       return runtime.send(id, prepareConversationInput(text, attachments), tools, publish);
+    },
+    dispose() {
+      unsubscribe();
+      rooms.stop();
+      danmaku.dispose();
+      void memory.dispose().catch((error: unknown) => console.warn('关闭记忆索引失败', error));
     },
   };
 }

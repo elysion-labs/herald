@@ -1,5 +1,5 @@
 import type { LivePlatform } from '@herald/live';
-import { and, count, desc, eq, gt, gte, lt, lte, or, sql } from 'drizzle-orm';
+import { and, count, desc, eq, gt, gte, inArray, lt, lte, max, or, sql } from 'drizzle-orm';
 import type { BaseSQLiteDatabase } from 'drizzle-orm/sqlite-core';
 
 import * as schema from './schema.ts';
@@ -24,7 +24,8 @@ const retention = 30 * 24 * 60 * 60 * 1000;
 export type StoredDanmaku = typeof schema.danmaku.$inferSelect;
 
 export interface DanmakuQuery {
-  platform: LivePlatform;
+  platform?: LivePlatform;
+  platforms?: readonly LivePlatform[];
   since?: number;
   until?: number;
   /** 观众 UID 或昵称（昵称模糊匹配）。 */
@@ -41,12 +42,13 @@ function escapeLike(value: string) {
  * 弹幕持久化：收到的弹幕先进缓冲区，每秒用一个事务批量写入，保留 30 天。
  * 查询前会先落盘缓冲区，保证刚到的弹幕也能查到。
  */
-export function openDanmakuStore(db: DanmakuDatabase) {
+export function openDanmakuStore(db: DanmakuDatabase, workspaceId: string) {
   const { danmaku } = schema;
-  let buffer: StoredDanmaku[] = [];
+  let buffer: (DanmakuMessage & { workspaceId: string })[] = [];
   let timer: ReturnType<typeof setTimeout> | undefined;
 
   function flush() {
+    clearTimeout(timer);
     timer = undefined;
 
     if (!buffer.length) {
@@ -54,17 +56,24 @@ export function openDanmakuStore(db: DanmakuDatabase) {
     }
 
     const rows = buffer;
-    buffer = [];
     db.transaction(() => {
-      db.insert(danmaku).values(rows).onConflictDoNothing().run();
+      for (let offset = 0; offset < rows.length; offset += 100) {
+        db.insert(danmaku)
+          .values(rows.slice(offset, offset + 100))
+          .onConflictDoNothing()
+          .run();
+      }
     });
+    buffer = [];
   }
 
-  function filters({ platform, since, until, viewer, keyword }: DanmakuQuery) {
+  function filters({ platform, platforms, since, until, viewer, keyword }: DanmakuQuery) {
     const name = viewer && `%${escapeLike(viewer)}%`;
 
     return and(
-      eq(danmaku.platform, platform),
+      eq(danmaku.workspaceId, workspaceId),
+      platform ? eq(danmaku.platform, platform) : undefined,
+      platforms ? inArray(danmaku.platform, platforms) : undefined,
       since === undefined ? undefined : gte(danmaku.receivedAt, since),
       until === undefined ? undefined : lte(danmaku.receivedAt, until),
       name
@@ -74,13 +83,15 @@ export function openDanmakuStore(db: DanmakuDatabase) {
     );
   }
 
+  const cutoff = Date.now() - retention;
   db.delete(danmaku)
-    .where(lt(danmaku.receivedAt, Date.now() - retention))
+    .where(and(eq(danmaku.workspaceId, workspaceId), lt(danmaku.receivedAt, cutoff)))
     .run();
 
   return {
     add(message: DanmakuMessage) {
       buffer.push({
+        workspaceId,
         evidenceId: message.evidenceId,
         platform: message.platform,
         roomId: message.roomId,
@@ -95,7 +106,11 @@ export function openDanmakuStore(db: DanmakuDatabase) {
     find(evidenceId: string) {
       return (
         buffer.find(row => row.evidenceId === evidenceId) ??
-        db.select().from(danmaku).where(eq(danmaku.evidenceId, evidenceId)).get()
+        db
+          .select()
+          .from(danmaku)
+          .where(and(eq(danmaku.workspaceId, workspaceId), eq(danmaku.evidenceId, evidenceId)))
+          .get()
       );
     },
     /** 按条件查询，结果按时间正序返回最近的 limit 条。 */
@@ -111,16 +126,39 @@ export function openDanmakuStore(db: DanmakuDatabase) {
         .all()
         .reverse();
     },
+    hasViewer(platform: LivePlatform, viewerId: string, before: number) {
+      flush();
+
+      return (
+        db
+          .select({ sequence: danmaku.sequence })
+          .from(danmaku)
+          .where(
+            and(
+              eq(danmaku.workspaceId, workspaceId),
+              eq(danmaku.platform, platform),
+              eq(danmaku.authorId, viewerId),
+              lt(danmaku.receivedAt, before),
+            ),
+          )
+          .get() !== undefined
+      );
+    },
     /** 发言最多的观众。 */
     viewers(input: DanmakuQuery) {
       flush();
       const total = count();
 
       return db
-        .select({ viewerId: danmaku.authorId, viewerName: danmaku.authorName, count: total })
+        .select({
+          platform: danmaku.platform,
+          viewerId: danmaku.authorId,
+          viewerName: danmaku.authorName,
+          count: total,
+        })
         .from(danmaku)
         .where(filters(input))
-        .groupBy(danmaku.authorId)
+        .groupBy(danmaku.platform, danmaku.authorId)
         .orderBy(desc(total))
         .limit(Math.min(input.limit ?? 20, 100))
         .all();
@@ -141,16 +179,27 @@ export function openDanmakuStore(db: DanmakuDatabase) {
         .reverse();
     },
     /** 游标之后的新弹幕（助手模式增量注入用）。 */
-    after(platform: LivePlatform, cursor: number, limit: number) {
+    before(since: number) {
       flush();
-      const where = and(eq(danmaku.platform, platform), gt(danmaku.receivedAt, cursor));
+
+      return (
+        db
+          .select({ cursor: max(danmaku.sequence) })
+          .from(danmaku)
+          .where(and(eq(danmaku.workspaceId, workspaceId), lt(danmaku.receivedAt, since)))
+          .get()?.cursor ?? 0
+      );
+    },
+    after(platforms: readonly LivePlatform[], cursor: number, limit: number) {
+      flush();
+      const where = and(filters({ platforms }), gt(danmaku.sequence, cursor));
       const total = db.select({ count: count() }).from(danmaku).where(where).get()?.count ?? 0;
 
       const rows = db
         .select()
         .from(danmaku)
         .where(where)
-        .orderBy(desc(danmaku.receivedAt))
+        .orderBy(desc(danmaku.sequence))
         .limit(limit)
         .all()
         .reverse();

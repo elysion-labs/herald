@@ -4,9 +4,9 @@ import { EventEmitter, on } from 'node:events';
 import { adapters } from '@herald/live';
 import type { LiveActivity, LiveChat, LiveChatMessage, LivePlatform } from '@herald/live';
 import { ORPCError } from '@orpc/server';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 
-import { liveRoomUrl, parseLiveRoom } from '../shared/live-room.ts';
+import { liveRoomUrl } from '../shared/live-room.ts';
 import { platforms } from '../shared/platforms.ts';
 import { schema } from './db/index.ts';
 import type { Database } from './db/index.ts';
@@ -22,7 +22,6 @@ interface RoomConnection {
 export type LiveMessage = LiveChatMessage & { evidenceId: string };
 
 const recentLimit = 30;
-const recentWindow = 2 * 60 * 1000;
 
 function explainFailure(error: unknown) {
   if (!(error instanceof Error)) {
@@ -48,25 +47,29 @@ function explainFailure(error: unknown) {
   return '暂时无法连接弹幕服务，请检查网络和直播状态。';
 }
 
-export function openLiveRooms(db: Database) {
-  const { platformLiveRooms: table } = schema;
+export function openLiveRooms(db: Database, workspaceId: string) {
+  const { workspaceRooms: table } = schema;
+  const workspace = eq(table.workspaceId, workspaceId);
+  const binding = (platform: LivePlatform) => and(workspace, eq(table.platform, platform));
+
+  const boundPlatforms = () => platforms.filter(platform => readRoom(platform) !== undefined);
 
   const readRoom = (platform: LivePlatform) =>
-    db.select().from(table).where(eq(table.platform, platform)).get()?.roomId;
+    db.select().from(table).where(binding(platform)).get()?.roomId;
 
   const saveRoom = (platform: LivePlatform, roomId: string) =>
     db
       .insert(table)
-      .values({ platform, roomId })
-      .onConflictDoUpdate({ target: table.platform, set: { roomId } })
+      .values({ workspaceId, platform, roomId })
+      .onConflictDoUpdate({ target: [table.workspaceId, table.platform], set: { roomId } })
       .run();
 
-  const removeRoom = (platform: LivePlatform) =>
-    db.delete(table).where(eq(table.platform, platform)).run();
+  const removeRoom = (platform: LivePlatform) => db.delete(table).where(binding(platform)).run();
 
   const connections = new Map<LivePlatform, RoomConnection>();
 
   /** 去重后的新弹幕广播：实时弹幕浮窗与自动提醒都订阅它。 */
+  const lifetime = new AbortController();
   const events = new EventEmitter<{ message: [LiveMessage]; activity: [LiveActivity] }>();
   events.setMaxListeners(0);
 
@@ -136,6 +139,7 @@ export function openLiveRooms(db: Database) {
 
   return {
     status,
+    boundPlatforms,
     connect,
     /** 礼物、醒目留言、上舰、进场、关注等互动事件。 */
     onActivity(listener: (activity: LiveActivity) => void) {
@@ -149,16 +153,29 @@ export function openLiveRooms(db: Database) {
       return () => events.off('message', listener);
     },
     /** 先推送最近的弹幕快照，再逐条推送新弹幕。 */
-    async *watch(platform: LivePlatform, signal?: AbortSignal) {
-      const updates = on(events, 'message', { signal });
+    async *watch(platform: LivePlatform | undefined, signal?: AbortSignal) {
+      const combined = signal ? AbortSignal.any([signal, lifetime.signal]) : lifetime.signal;
+
+      if (combined.aborted) {
+        return;
+      }
+
+      const updates = on(events, 'message', { signal: combined });
 
       try {
-        yield connections.get(platform)?.recent ?? [];
+        const selected = platform ? [platform] : boundPlatforms();
+        yield selected
+          .flatMap(item => connections.get(item)?.recent ?? [])
+          .sort((left, right) => left.receivedAt - right.receivedAt);
 
         for await (const [message] of updates as AsyncIterableIterator<[LiveMessage]>) {
-          if (message.platform === platform) {
+          if (!platform || message.platform === platform) {
             yield [message];
           }
+        }
+      } catch (error) {
+        if (!combined.aborted) {
+          throw error;
         }
       } finally {
         await updates.return?.();
@@ -168,25 +185,25 @@ export function openLiveRooms(db: Database) {
       platforms.forEach(connect);
     },
     stop() {
+      lifetime.abort();
       platforms.forEach(stop);
     },
-    recent(platform: LivePlatform) {
-      const since = Date.now() - recentWindow;
-
-      return connections.get(platform)?.recent.filter(message => message.receivedAt >= since) ?? [];
-    },
-    setBinding(platform: LivePlatform, input: string | null) {
-      if (input === null) {
+    setBinding(platform: LivePlatform, roomId: string | null) {
+      if (roomId === null) {
         removeRoom(platform);
         stop(platform);
 
         return null;
       }
 
-      const roomId = parseLiveRoom(platform, input);
+      const owner = db
+        .select({ workspaceId: table.workspaceId })
+        .from(table)
+        .where(and(eq(table.platform, platform), eq(table.roomId, roomId)))
+        .get();
 
-      if (!roomId) {
-        throw new ORPCError('BAD_REQUEST', { message: '请输入当前平台的直播间号码或官方直播链接' });
+      if (owner && owner.workspaceId !== workspaceId) {
+        throw new ORPCError('CONFLICT', { message: '这个直播间已绑定到其他工作区' });
       }
 
       const previous = status(platform);

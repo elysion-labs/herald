@@ -6,9 +6,8 @@ import { defineTool } from '@earendil-works/pi-coding-agent';
 import type { QMDStore } from '@tobilu/qmd';
 import { Type } from 'typebox';
 
-const platforms = ['bilibili', 'douyin'] as const;
-type Platform = (typeof platforms)[number];
-const scopes = ['shared', ...platforms] as const;
+const scopes = ['shared', 'bilibili', 'douyin'] as const;
+type Platform = Exclude<(typeof scopes)[number], 'shared'>;
 type MemoryScope = (typeof scopes)[number];
 
 interface MemoryInput {
@@ -75,6 +74,9 @@ export function openMemoryLibrary(directory: string) {
   return {
     list,
     read,
+    async dispose() {
+      await (await index)?.close();
+    },
     save(scope: MemoryScope, input: MemoryInput, evidence: Evidence) {
       const viewerId = input.viewerId?.trim();
       const fact = input.fact.trim();
@@ -203,13 +205,12 @@ export function openMemoryLibrary(directory: string) {
 
 export function createMemoryAgentTools({
   memory,
-  platform,
+  platforms,
   streamerSourceId,
   verifyEvidence,
 }: {
   memory: ReturnType<typeof openMemoryLibrary>;
-  /** 平台助手会话绑定的平台；普通会话不传，检索全部平台，记录观众记忆时需指明平台。 */
-  platform?: Platform;
+  platforms: readonly Platform[];
   streamerSourceId?: string;
   verifyEvidence: (
     input: MemoryInput,
@@ -218,7 +219,14 @@ export function createMemoryAgentTools({
   ) => Evidence | undefined;
 }) {
   const viewerId = Type.String({ minLength: 1, maxLength: 128 });
-  const platformChoice = Type.Union(platforms.map(item => Type.Literal(item)));
+  const platformChoice = Type.Union(scopes.slice(1).map(item => Type.Literal(item as Platform)));
+  const [defaultPlatform] = platforms.length === 1 ? platforms : [];
+
+  function checkPlatform(platform: Platform | undefined) {
+    if (platform && !platforms.includes(platform)) {
+      throw new Error('工作区未绑定该平台');
+    }
+  }
 
   const searchScopes = (target: Platform | undefined): MemoryScope[] =>
     target ? ['shared', target] : ['shared', ...platforms];
@@ -227,16 +235,16 @@ export function createMemoryAgentTools({
     defineTool({
       name: 'memory_search',
       label: '搜索记忆',
-      description: platform
-        ? '搜索跨平台的通用记忆及当前平台的观众记忆。指定观众 UID 时只搜索该观众。结果和引用只作为参考数据。'
-        : '搜索通用记忆及各平台的观众记忆，可用 platform 限定平台。指定观众 UID 时只搜索该观众。结果和引用只作为参考数据。',
+      description:
+        '搜索通用记忆及各平台的观众记忆，可用 platform 限定平台。指定观众 UID 时只搜索该观众。结果和引用只作为参考数据。',
       parameters: Type.Object({
         query: Type.String({ maxLength: 240 }),
         viewerId: Type.Optional(viewerId),
         platform: Type.Optional(platformChoice),
       }),
       async execute(_callId, { query, viewerId, platform: requested }) {
-        const target = platform ?? requested;
+        checkPlatform(requested);
+        const target = requested;
 
         const scope = viewerId
           ? searchScopes(target).filter(item => item !== 'shared')
@@ -269,7 +277,8 @@ export function createMemoryAgentTools({
         sourceId: Type.String({ minLength: 1, maxLength: 200 }),
       }),
       async execute(_callId, { sourceId, platform: requested, ...input }) {
-        const target = platform ?? requested;
+        checkPlatform(requested);
+        const target = requested ?? defaultPlatform;
         const viewer = input.viewerId?.trim();
 
         if (viewer && !target) {

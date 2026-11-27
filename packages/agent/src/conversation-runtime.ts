@@ -22,19 +22,20 @@ type AgentOptions = Parameters<typeof createLiveAgent>[0];
 
 interface Conversation {
   id: string;
-  platform: LivePlatform | null;
+
   mode: 'chat' | 'assistant';
   liveStartedAt: number | null;
 }
 
 interface ConversationRuntimeOptions {
-  store: (conversation: Conversation) => ReturnType<typeof createSessionStore>;
+  store: ReturnType<typeof createSessionStore>;
+  agentDir: string;
   conversation: (id: string) => Conversation;
   currentModel: (id: string) => Promise<Pick<AgentOptions, 'modelRuntime' | 'model' | 'thinking'>>;
   agentSettings: () => Pick<AgentOptions, 'systemPromptExtra' | 'builtinTools'>;
   memory: ReturnType<typeof openMemoryLibrary>;
   danmaku: DanmakuStore;
-  platforms: readonly LivePlatform[];
+  platforms: () => readonly LivePlatform[];
   room: (platform: LivePlatform) => { roomId: string; url: string } | undefined;
   takeDanmaku: (id: string) => { count: number; text: string } | undefined;
   rename: (title: string, id: string) => void;
@@ -59,7 +60,8 @@ function assertReply(reply: AgentSession['messages'][number] | undefined) {
 }
 
 export function createConversationRuntime({
-  store: sessionStore,
+  store,
+  agentDir,
   conversation: getConversation,
   currentModel,
   agentSettings,
@@ -92,20 +94,16 @@ export function createConversationRuntime({
 
   /** 告诉 agent 当前绑定的直播间以及本会话的身份。 */
   function roomContext(conversation: Conversation) {
-    const bindings = platforms.map(platform => {
+    const bindings = platforms().map(platform => {
       const room = boundRoom(platform);
 
       return `- ${adapters[platform].label}：${room ? `直播间 ${room.roomId}（${room.url}）` : '未绑定直播间'}`;
     });
 
-    const label = conversation.platform ? adapters[conversation.platform].label : undefined;
-    let scope = '本会话是普通会话，不属于某个平台。';
-
-    if (label && conversation.mode === 'assistant') {
-      scope = `本会话是${label}的直播助手会话，默认针对${label}直播间。`;
-    } else if (label) {
-      scope = `本会话是${label}的一场历史直播。`;
-    }
+    const scope =
+      conversation.mode === 'assistant'
+        ? '本会话是当前工作区的直播助手会话，弹幕来自该工作区已绑定的平台。'
+        : '本会话属于当前工作区，可检索该工作区的记忆和历史。';
 
     return ['## 当前绑定的直播间', ...bindings, scope].join('\n');
   }
@@ -132,7 +130,7 @@ export function createConversationRuntime({
       throw new ORPCError('PRECONDITION_FAILED', { message: '请在设置中配置模型凭证' });
     }
 
-    const store = sessionStore(conversation);
+    const eligible = platforms();
 
     const target = store.open(conversation.id)
       ? { sessionId: conversation.id }
@@ -143,7 +141,7 @@ export function createConversationRuntime({
 
     const memoryTools = createMemoryAgentTools({
       memory,
-      platform: conversation.platform ?? undefined,
+      platforms: eligible,
       streamerSourceId: sourceId,
       verifyEvidence(input, id, target) {
         const { viewerId, quote } = input;
@@ -170,18 +168,17 @@ export function createConversationRuntime({
 
     const agent = await createLiveAgent({
       store,
+      agentDir,
       modelRuntime,
       model,
       thinking,
       tools: [
         ...(tools ?? []),
         ...memoryTools,
-        createDanmakuTool(danmaku, conversation.platform),
-        ...createViewerProfileTools(conversation.platform, platforms),
+        createDanmakuTool(danmaku, eligible),
+        ...createViewerProfileTools(eligible),
       ],
       onTitle: canRename(conversation) ? title => rename(title, conversation.id) : undefined,
-      // 普通会话可以跨平台读取历史会话。
-      historyScopes: conversation.platform ? [] : platforms,
       ...agentSettings(),
       context: roomContext(conversation),
       ...target,
@@ -206,6 +203,7 @@ export function createConversationRuntime({
 
   return {
     isRunning: (id: string) => running.has(id),
+    isBusy: () => running.size > 0,
     addFeedback(id: string, note: string) {
       getConversation(id);
       feedback.set(id, [...(feedback.get(id) ?? []), note].slice(-20));
@@ -215,8 +213,8 @@ export function createConversationRuntime({
      * 窗口取当前模型；累计 token 与费用汇总活动分支上的全部回复。
      */
     async usage(id: string) {
-      const conversation = getConversation(id);
-      const session = sessionStore(conversation).open(id);
+      getConversation(id);
+      const session = store.open(id);
 
       const replies = (session?.getBranch() ?? []).flatMap(entry =>
         entry.type === 'message' && entry.message.role === 'assistant' ? [entry.message.usage] : [],
@@ -314,6 +312,7 @@ export function createConversationRuntime({
         const { session } = await startAgent(conversation, tools, '');
         const manager = session.sessionManager;
         const before = manager.getLeafId();
+        const sourcePlatforms = 'platform' in trigger ? [trigger.platform] : platforms();
         const unsubscribe = subscribeToReplies(session, publish);
 
         try {
@@ -324,10 +323,7 @@ export function createConversationRuntime({
               content: reminderPrompt(
                 trigger,
                 takeDanmaku(id)?.text ?? '[]',
-                supports(
-                  conversation.platform ? [conversation.platform] : platforms,
-                  'viewerProfile',
-                ),
+                supports(sourcePlatforms, 'viewerProfile'),
               ),
               details: trigger,
             },

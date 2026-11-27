@@ -9,7 +9,10 @@ import * as schema from './schema.ts';
 
 /** 打开 Herald 数据库并执行 drizzle-kit 生成的迁移。 */
 export function openDatabase(directory: string) {
-  const client = new DatabaseSync(join(directory, 'herald.sqlite'));
+  const client = new DatabaseSync(join(directory, 'herald.sqlite'), {
+    enableForeignKeyConstraints: false,
+  });
+
   const db = drizzle({ client, schema });
 
   /*

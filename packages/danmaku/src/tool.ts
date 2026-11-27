@@ -50,12 +50,12 @@ const parameters = Type.Object({
 });
 
 /** 让 agent 按需查询本平台已保存的弹幕；统计模式避免把大量原文拉进上下文。 */
-export function createDanmakuTool(store: DanmakuStore, platform: LivePlatform | null) {
+export function createDanmakuTool(store: DanmakuStore, platforms: readonly LivePlatform[]) {
   return defineTool({
     name: 'query_danmaku',
     label: '查询弹幕',
     description: [
-      '查询已保存的直播弹幕（保留 30 天）。助手会话默认查自己的平台，普通会话需传 platform。',
+      '查询已保存的直播弹幕（保留 30 天）。默认查本工作区已绑定的平台，可用 platform 限定。',
       'mode=messages 返回弹幕原文，每条带 sourceId，可作为观众记忆的证据；',
       'mode=viewers 统计发言最多的观众；mode=timeline 统计每分钟弹幕量。',
       '想了解整体情况时先用统计模式，再按观众或关键词查原文。',
@@ -65,14 +65,13 @@ export function createDanmakuTool(store: DanmakuStore, platform: LivePlatform | 
       _callId,
       { platform: requested, mode = 'messages', minutes = 10, viewer, keyword, limit },
     ) {
-      const target = platform ?? requested;
-
-      if (!target) {
-        throw new Error('普通会话查询弹幕时需要指明 platform（bilibili 或 douyin）');
+      if (requested && !platforms.includes(requested)) {
+        throw new Error('工作区未绑定该平台');
       }
 
       const query = {
-        platform: target,
+        platform: requested,
+        platforms,
         since: Date.now() - minutes * 60_000,
         viewer: present(viewer),
         keyword: present(keyword),
@@ -84,6 +83,7 @@ export function createDanmakuTool(store: DanmakuStore, platform: LivePlatform | 
       if (mode === 'messages') {
         result = store.query(query).map(row => ({
           sourceId: row.evidenceId,
+          platform: row.platform,
           time: clock(row.receivedAt),
           viewerId: row.authorId,
           viewerName: row.authorName,

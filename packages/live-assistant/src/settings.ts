@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+const platform = z.enum(['bilibili', 'douyin']);
+
 const enabled = z.boolean();
 const silenceSeconds = z.number().int().min(30).max(1800);
 const periodicMinutes = z.number().int().min(1).max(60);
@@ -88,6 +90,7 @@ export const reminderTrigger = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('silence'), seconds: z.number() }),
   z.object({
     kind: z.literal('viewer'),
+    platform,
     viewerId: z.string(),
     viewerName: z.string().nullable(),
     text: z.string(),
@@ -95,6 +98,7 @@ export const reminderTrigger = z.discriminatedUnion('kind', [
   }),
   z.object({
     kind: z.literal('keyword'),
+    platform,
     keyword: z.string(),
     viewerName: z.string().nullable(),
     text: z.string(),
@@ -104,6 +108,7 @@ export const reminderTrigger = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('liveEnd'), startedAt: z.number(), endedAt: z.number() }),
   z.object({
     kind: z.literal('gift'),
+    platform,
     viewerId: z.string().nullable(),
     viewerName: z.string().nullable(),
     item: z.string(),
@@ -111,6 +116,7 @@ export const reminderTrigger = z.discriminatedUnion('kind', [
   }),
   z.object({
     kind: z.literal('entry'),
+    platform,
     viewerId: z.string(),
     viewerName: z.string().nullable(),
     identity: z.string(),
@@ -124,6 +130,7 @@ export const reminderTrigger = z.discriminatedUnion('kind', [
   }),
   z.object({
     kind: z.literal('welcome'),
+    platform,
     viewerId: z.string(),
     viewerName: z.string().nullable(),
     text: z.string(),

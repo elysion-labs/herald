@@ -42,6 +42,7 @@ export function giftTrigger(
 
   return {
     kind: 'gift',
+    platform: activity.platform,
     viewerId: activity.viewer.id,
     viewerName: activity.viewer.name,
     item,

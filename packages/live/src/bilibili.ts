@@ -25,6 +25,21 @@ function plainText(html: string | undefined) {
   return text ? text.slice(0, 300) : null;
 }
 
+async function resolveRoomId(roomId: string, signal?: AbortSignal) {
+  const { data } = await getJson(
+    `https://api.live.bilibili.com/room/v1/Room/room_init?id=${encodeURIComponent(roomId)}`,
+    { headers: { 'user-agent': userAgent }, signal },
+  );
+
+  const canonical = data?.room_id;
+
+  if (typeof canonical !== 'number' || !Number.isSafeInteger(canonical) || canonical <= 0) {
+    throw new Error('无法确认 B 站直播间号码');
+  }
+
+  return String(canonical);
+}
+
 async function fetchRoomProfile(
   roomId: string,
   { signal }: RoomProfileOptions = {},
@@ -207,6 +222,7 @@ export const bilibiliAdapter: LivePlatformAdapter = {
     welcome: true,
   },
   createChat,
+  resolveRoomId,
   fetchRoomProfile,
   fetchViewerProfile,
 };

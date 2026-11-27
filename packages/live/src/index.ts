@@ -123,6 +123,7 @@ export interface RoomProfileOptions {
 
 export interface LivePlatformAdapter extends LivePlatformInfo {
   createChat: (options: LiveChatOptions) => LiveChat;
+  resolveRoomId?: (roomId: string, signal?: AbortSignal) => Promise<string>;
   fetchRoomProfile: (roomId: string, options?: RoomProfileOptions) => Promise<RoomProfile>;
   fetchViewerProfile?: (
     viewerId: string,

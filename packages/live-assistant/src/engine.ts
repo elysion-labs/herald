@@ -1,9 +1,9 @@
 import { EventEmitter, on } from 'node:events';
 
-import { adapters } from '@herald/live';
+import { adapters, supports } from '@herald/live';
 import type { LiveActivity, LivePlatform } from '@herald/live';
 
-import { createHeatState, heatTrigger, recordHeat, resetHeat } from './heat.ts';
+import { createHeatState, heatTrigger, recordHeat } from './heat.ts';
 import type { HeatState } from './heat.ts';
 import { entryQualifies, giftTrigger, identityOf } from './interactions.ts';
 import type { AssistantSettings, ReminderTrigger } from './settings.ts';
@@ -19,8 +19,9 @@ export interface AssistantMessage {
 
 /** 宿主应用提供给调度器的能力；调度器本身不接触会话存储、记忆或直播连接。 */
 export interface AssistantHost<Turns> {
-  /** 该平台的助手会话 id。 */
-  assistantConversation: (platform: LivePlatform) => string | undefined;
+  /** 当前正在直播的助手会话 id。 */
+  activeConversation: () => string | undefined;
+  platforms: () => readonly LivePlatform[];
   isRunning: (conversationId: string) => boolean;
   /** 让 agent 处理一次提醒；delivered=false 表示模型判断无需提醒。 */
   remind: (
@@ -31,9 +32,7 @@ export interface AssistantHost<Turns> {
   settings: () => AssistantSettings;
   /** 该观众在此平台已有的记忆内容。 */
   viewerFacts: (platform: LivePlatform, viewerId: string) => string[];
-  roomConnected: (platform: LivePlatform) => boolean;
-  /** 直播间是否在播；冷场提醒只在确认直播中时触发。 */
-  roomLive: (platform: LivePlatform) => 'live' | 'offline' | 'unknown';
+  roomConnected: () => boolean;
   onMessage: (listener: (message: AssistantMessage) => void) => () => void;
   /** 礼物、醒目留言、上舰、进场等互动。 */
   onActivity: (listener: (activity: LiveActivity) => void) => () => void;
@@ -46,7 +45,7 @@ export type AssistantEvent<Turns> =
   | { conversationId: string; phase: 'update'; turns: Turns }
   | { conversationId: string; phase: 'done'; delivered: boolean; error?: string };
 
-interface PlatformState {
+interface WorkspaceState {
   /** 助手会话运行中时暂存的最新一条提醒，空闲后再发。 */
   pending?: ReminderTrigger;
   /** 冷场计时的起点：最近一条弹幕或打开会话的时刻。 */
@@ -56,8 +55,6 @@ interface PlatformState {
   lastPeriodicAt: number;
   sincePeriodic: number;
   viewerCooldown: Map<string, number>;
-  /** 上一次检查时是否在播，用于开播时重置冷场计时。 */
-  live: boolean;
   /** 本场已分析过进场的观众。 */
   entered: Set<string>;
   /** 本场已发过言的观众。 */
@@ -71,46 +68,50 @@ const typingHold = 8000;
 
 /**
  * 弹幕自动提醒的调度：规则触发（冷场、有记忆的观众、关注词）与定时批量分析。
- * 只发给各平台的助手模式会话，受冷却时间限制；会话运行中时暂存最新一条，空闲后补发。
+ * 只发给当前工作区的助手会话，受冷却时间限制；会话运行中时暂存最新一条，空闲后补发。
  */
 export function createLiveAssistant<Turns>(host: AssistantHost<Turns>) {
   const events = new EventEmitter<{ event: [AssistantEvent<Turns>] }>();
   events.setMaxListeners(0);
 
-  const states = new Map<LivePlatform, PlatformState>(
-    Object.values(adapters).map(({ id: platform }) => [
-      platform,
-      {
-        quietSince: Date.now(),
+  const lifetime = new AbortController();
+  let activeId: string | undefined;
+  let state: WorkspaceState;
+  let typingAt: { id: string; time: number } | undefined;
+
+  function syncSession() {
+    const id = host.activeConversation();
+
+    if (id !== activeId || !state) {
+      const now = Date.now();
+      activeId = id;
+      state = {
+        quietSince: now,
         silenceFired: false,
         lastTriggerAt: 0,
-        lastPeriodicAt: Date.now(),
+        lastPeriodicAt: now,
         sincePeriodic: 0,
         viewerCooldown: new Map(),
-        live: false,
         entered: new Set(),
         spoken: new Set(),
         heat: createHeatState(),
-      },
-    ]),
-  );
+      };
+    }
 
-  /** 提醒只发给该平台的助手会话。 */
-  const target = (platform: LivePlatform) => host.assistantConversation(platform);
-  const typingAt = new Map<string, number>();
+    return id;
+  }
 
   const typing = (conversationId: string) =>
-    Date.now() - (typingAt.get(conversationId) ?? 0) < typingHold;
+    typingAt?.id === conversationId && Date.now() - typingAt.time < typingHold;
 
   /** urgent：答谢等时效性强的提醒，不受全局提醒间隔限制。 */
-  function fire(platform: LivePlatform, trigger: ReminderTrigger, urgent = false) {
-    const state = states.get(platform);
-    const conversationId = target(platform);
+  function fire(trigger: ReminderTrigger, urgent = false) {
+    const conversationId = syncSession();
     const now = Date.now();
     const { cooldownSeconds } = host.settings();
-    const cooling = !urgent && now - (state?.lastTriggerAt ?? 0) < cooldownSeconds * 1000;
+    const cooling = !urgent && now - state.lastTriggerAt < cooldownSeconds * 1000;
 
-    if (!state || !conversationId || cooling) {
+    if (!conversationId || cooling) {
       return false;
     }
 
@@ -152,10 +153,11 @@ export function createLiveAssistant<Turns>(host: AssistantHost<Turns>) {
 
   function viewerTrigger(
     message: AssistantMessage,
-    state: PlatformState,
+    state: WorkspaceState,
   ): ReminderTrigger | undefined {
     const viewerId = message.authorId;
-    const last = viewerId ? state.viewerCooldown.get(viewerId) : undefined;
+    const key = `${message.platform}:${viewerId}`;
+    const last = state.viewerCooldown.get(key);
 
     const cooldown = host.settings().memoryViewers.cooldownMinutes * 60_000;
 
@@ -169,10 +171,11 @@ export function createLiveAssistant<Turns>(host: AssistantHost<Turns>) {
       return undefined;
     }
 
-    state.viewerCooldown.set(viewerId, Date.now());
+    state.viewerCooldown.set(key, Date.now());
 
     return {
       kind: 'viewer',
+      platform: message.platform,
       viewerId,
       viewerName: message.authorName,
       text: message.text,
@@ -181,9 +184,7 @@ export function createLiveAssistant<Turns>(host: AssistantHost<Turns>) {
   }
 
   function onMessage(message: AssistantMessage) {
-    const state = states.get(message.platform);
-
-    if (!state || !adapters[message.platform].capabilities.danmaku) {
+    if (!syncSession() || !adapters[message.platform].capabilities.danmaku) {
       return;
     }
 
@@ -192,20 +193,16 @@ export function createLiveAssistant<Turns>(host: AssistantHost<Turns>) {
     state.sincePeriodic += 1;
     recordHeat(state.heat, message.receivedAt);
 
-    if (!target(message.platform)) {
-      return;
-    }
-
     const config = host.settings();
     const welcome = welcomeTrigger(message, state, config);
 
-    if (welcome && fire(message.platform, welcome)) {
+    if (welcome && fire(welcome)) {
       return;
     }
 
     const viewer = config.memoryViewers.enabled ? viewerTrigger(message, state) : undefined;
 
-    if (viewer && fire(message.platform, viewer)) {
+    if (viewer && fire(viewer)) {
       return;
     }
 
@@ -214,8 +211,9 @@ export function createLiveAssistant<Turns>(host: AssistantHost<Turns>) {
       : undefined;
 
     if (keyword) {
-      fire(message.platform, {
+      fire({
         kind: 'keyword',
+        platform: message.platform,
         keyword,
         viewerName: message.authorName,
         text: message.text,
@@ -228,38 +226,47 @@ export function createLiveAssistant<Turns>(host: AssistantHost<Turns>) {
   /** 新观众本场第一次发言，且之前没有弹幕和记忆时，给出欢迎话术。 */
   function welcomeTrigger(
     message: AssistantMessage,
-    state: PlatformState,
+    state: WorkspaceState,
     config: Config,
   ): ReminderTrigger | undefined {
     const viewerId = message.authorId;
 
-    if (!viewerId || state.spoken.has(viewerId)) {
+    const key = `${message.platform}:${viewerId}`;
+
+    if (!viewerId || state.spoken.has(key)) {
       return undefined;
     }
 
-    state.spoken.add(viewerId);
+    state.spoken.add(key);
 
     const fresh =
       config.welcome.enabled &&
       adapters[message.platform].capabilities.welcome &&
-      host.roomLive(message.platform) === 'live' &&
       !host.viewerFacts(message.platform, viewerId).length &&
       !host.viewerSeenBefore(message.platform, viewerId);
 
     return fresh
-      ? { kind: 'welcome', viewerId, viewerName: message.authorName, text: message.text }
+      ? {
+          kind: 'welcome',
+          platform: message.platform,
+          viewerId,
+          viewerName: message.authorName,
+          text: message.text,
+        }
       : undefined;
   }
 
   /** 进场分析：满足条件的观众本场第一次进场时触发。 */
-  function onEntry(activity: LiveActivity, state: PlatformState, config: Config) {
+  function onEntry(activity: LiveActivity, state: WorkspaceState, config: Config) {
     const viewerId = activity.viewer.id;
 
-    if (!viewerId || !config.entry.enabled || state.entered.has(viewerId)) {
+    const key = `${activity.platform}:${viewerId}`;
+
+    if (!viewerId || !config.entry.enabled || state.entered.has(key)) {
       return;
     }
 
-    state.entered.add(viewerId);
+    state.entered.add(key);
     const facts = host.viewerFacts(activity.platform, viewerId).slice(0, 8);
     const { capabilities } = adapters[activity.platform];
 
@@ -271,8 +278,9 @@ export function createLiveAssistant<Turns>(host: AssistantHost<Turns>) {
     };
 
     if (entryQualifies(viewer, facts.length > 0, config.entry)) {
-      fire(activity.platform, {
+      fire({
         kind: 'entry',
+        platform: activity.platform,
         viewerId,
         viewerName: viewer.name,
         identity: identityOf(viewer),
@@ -289,9 +297,7 @@ export function createLiveAssistant<Turns>(host: AssistantHost<Turns>) {
       return;
     }
 
-    const state = states.get(platform);
-
-    if (!state || !target(platform) || host.roomLive(platform) !== 'live') {
+    if (!syncSession()) {
       return;
     }
 
@@ -306,52 +312,28 @@ export function createLiveAssistant<Turns>(host: AssistantHost<Turns>) {
     const trigger = giftTrigger(activity, config.gifts);
 
     if (trigger) {
-      fire(platform, trigger, true);
+      fire(trigger, true);
     }
-  }
-
-  function updateLiveState(platform: LivePlatform, state: PlatformState, now: number) {
-    const live = host.roomLive(platform) === 'live';
-
-    if (live && !state.live) {
-      state.quietSince = now;
-      state.silenceFired = false;
-      state.entered.clear();
-      state.spoken.clear();
-      resetHeat(state.heat);
-    }
-
-    state.live = live;
   }
 
   /** 冷场提醒：只在确认直播中时计时；刚开播时从开播时刻重新计时。 */
-  function checkSilence(platform: LivePlatform, state: PlatformState, config: Config, now: number) {
+  function checkSilence(config: Config, now: number) {
     const quiet = now - state.quietSince;
 
-    if (
-      state.live &&
-      config.silence.enabled &&
-      !state.silenceFired &&
-      quiet >= config.silence.seconds * 1000
-    ) {
-      state.silenceFired = fire(platform, { kind: 'silence', seconds: Math.round(quiet / 1000) });
+    if (config.silence.enabled && !state.silenceFired && quiet >= config.silence.seconds * 1000) {
+      state.silenceFired = fire({ kind: 'silence', seconds: Math.round(quiet / 1000) });
     }
   }
 
-  function checkHeat(platform: LivePlatform, state: PlatformState, config: Config, now: number) {
-    const trigger = state.live ? heatTrigger(state.heat, config.heat, now) : undefined;
+  function checkHeat(config: Config, now: number) {
+    const trigger = heatTrigger(state.heat, config.heat, now);
 
     if (trigger) {
-      fire(platform, trigger);
+      fire(trigger);
     }
   }
 
-  function checkPeriodic(
-    platform: LivePlatform,
-    state: PlatformState,
-    config: Config,
-    now: number,
-  ) {
+  function checkPeriodic(config: Config, now: number) {
     if (!config.periodic.enabled || now - state.lastPeriodicAt < config.periodic.minutes * 60_000) {
       return;
     }
@@ -361,35 +343,29 @@ export function createLiveAssistant<Turns>(host: AssistantHost<Turns>) {
     state.sincePeriodic = 0;
 
     if (count >= config.periodic.minMessages) {
-      fire(platform, { kind: 'periodic', minutes: config.periodic.minutes, count });
+      fire({ kind: 'periodic', minutes: config.periodic.minutes, count });
     }
   }
 
   function tick() {
-    const now = Date.now();
-    const config = host.settings();
+    const conversationId = syncSession();
 
-    for (const [platform, state] of states) {
-      const conversationId = target(platform);
+    if (!conversationId || !host.roomConnected()) {
+      return;
+    }
 
-      if (!conversationId || !host.roomConnected(platform)) {
-        continue;
+    if (state.pending && !host.isRunning(conversationId) && !typing(conversationId)) {
+      if (fire(state.pending, state.pending.kind === 'gift')) {
+        return;
       }
+    }
 
-      if (state.pending && !host.isRunning(conversationId) && !typing(conversationId)) {
-        fire(platform, state.pending);
-        continue;
-      }
-
-      updateLiveState(platform, state, now);
-
-      if (!adapters[platform].capabilities.danmaku) {
-        continue;
-      }
-
-      checkSilence(platform, state, config, now);
-      checkPeriodic(platform, state, config, now);
-      checkHeat(platform, state, config, now);
+    if (supports(host.platforms(), 'danmaku')) {
+      const now = Date.now();
+      const config = host.settings();
+      checkSilence(config, now);
+      checkPeriodic(config, now);
+      checkHeat(config, now);
     }
   }
 
@@ -405,30 +381,43 @@ export function createLiveAssistant<Turns>(host: AssistantHost<Turns>) {
     async run(conversationId: string, trigger: ReminderTrigger) {
       const deadline = Date.now() + 2 * 60_000;
 
-      while (host.isRunning(conversationId) && Date.now() < deadline) {
+      while (!lifetime.signal.aborted && host.isRunning(conversationId) && Date.now() < deadline) {
         await new Promise(resolve => {
           setTimeout(resolve, 1000);
         });
       }
 
-      await deliver(conversationId, trigger);
+      if (!lifetime.signal.aborted) {
+        await deliver(conversationId, trigger);
+      }
     },
     /** 主播正在助手会话里输入。 */
     typing(conversationId: string) {
-      typingAt.set(conversationId, Date.now());
+      typingAt = { id: conversationId, time: Date.now() };
     },
     async *watch(signal?: AbortSignal) {
-      const updates = on(events, 'event', { signal });
+      const combined = signal ? AbortSignal.any([signal, lifetime.signal]) : lifetime.signal;
+
+      if (combined.aborted) {
+        return;
+      }
+
+      const updates = on(events, 'event', { signal: combined });
 
       try {
         for await (const [event] of updates as AsyncIterableIterator<[AssistantEvent<Turns>]>) {
           yield event;
+        }
+      } catch (error) {
+        if (!combined.aborted) {
+          throw error;
         }
       } finally {
         await updates.return?.();
       }
     },
     dispose() {
+      lifetime.abort();
       clearInterval(timer);
       unsubscribe();
       unsubscribeActivity();

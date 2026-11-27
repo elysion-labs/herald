@@ -6,7 +6,9 @@ export const livePlatforms = ['bilibili', 'douyin'] as const;
 export const danmaku = sqliteTable(
   'danmaku',
   {
-    evidenceId: text('evidence_id').primaryKey(),
+    sequence: integer().primaryKey({ autoIncrement: true }),
+    evidenceId: text('evidence_id').notNull().unique(),
+    workspaceId: text('workspace_id').notNull(),
     platform: text({ enum: livePlatforms }).notNull(),
     roomId: text('room_id').notNull(),
     authorId: text('author_id'),
@@ -15,7 +17,17 @@ export const danmaku = sqliteTable(
     receivedAt: integer('received_at').notNull(),
   },
   table => [
-    index('danmaku_platform_time').on(table.platform, table.receivedAt),
-    index('danmaku_platform_author_time').on(table.platform, table.authorId, table.receivedAt),
+    index('danmaku_workspace_sequence').on(table.workspaceId, table.sequence),
+    index('danmaku_workspace_platform_time').on(
+      table.workspaceId,
+      table.platform,
+      table.receivedAt,
+    ),
+    index('danmaku_workspace_platform_author_time').on(
+      table.workspaceId,
+      table.platform,
+      table.authorId,
+      table.receivedAt,
+    ),
   ],
 );

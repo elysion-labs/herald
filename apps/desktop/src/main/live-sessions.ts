@@ -1,47 +1,55 @@
 import { supports } from '@herald/live';
-import type { LivePlatform } from '@herald/live';
 import type { createLiveAssistant } from '@herald/live-assistant';
+import { ORPCError } from '@orpc/server';
 
 import type { openWorkspace } from './workspace.ts';
 
 type Workspace = ReturnType<typeof openWorkspace>;
 type Assistant = Pick<ReturnType<typeof createLiveAssistant>, 'run'>;
 
-/**
- * 按直播场次组织助手会话（由主播手动开播 / 下播）：开播时当前助手会话成为本场会话并推荐话题；
- * 下播时先复盘，再把本场转为普通会话（标题为开播时间），并开好下一场。
- */
+/** 开播和复盘以工作区为单位，直播结束后保留本场的平台快照。 */
 export function createLiveSessions(workspace: Workspace, assistant: Assistant) {
-  const ending = new Set<LivePlatform>();
+  let ending = false;
 
-  async function start(platform: LivePlatform) {
-    const before = workspace.assistantConversation(platform);
-    const conversation = workspace.beginLiveSession(platform);
+  function start() {
+    const before = workspace.assistantConversation();
 
-    // 已经开播过的场次不再重复推荐。
-    if (
-      !before?.liveStartedAt &&
-      conversation?.liveStartedAt &&
-      workspace.settings.assistant().liveStart.enabled
-    ) {
-      // 话题推荐在后台进行，开播操作立即完成。
-      void assistant
-        .run(conversation.id, { kind: 'liveStart', startedAt: conversation.liveStartedAt })
-        .catch((error: unknown) => console.error('开播话题推荐失败', platform, error));
+    if (before?.liveStartedAt) {
+      return before;
     }
+
+    const platforms = workspace.rooms.boundPlatforms();
+
+    if (!platforms.length) {
+      throw new ORPCError('PRECONDITION_FAILED', { message: '请先绑定至少一个直播间' });
+    }
+
+    const conversation = workspace.beginLiveSession(platforms);
+
+    if (conversation?.liveStartedAt && workspace.getAssistantSettings().liveStart.enabled) {
+      void assistant.run(conversation.id, {
+        kind: 'liveStart',
+        startedAt: conversation.liveStartedAt,
+      });
+    }
+
+    return conversation;
   }
 
-  async function end(platform: LivePlatform) {
-    const current = workspace.assistantConversation(platform);
+  async function end() {
+    const current = workspace.assistantConversation();
 
-    if (!current?.liveStartedAt || ending.has(platform)) {
+    if (!current?.liveStartedAt || ending) {
       return;
     }
 
-    ending.add(platform);
+    ending = true;
 
     try {
-      if (workspace.settings.assistant().liveEnd.enabled && supports([platform], 'danmaku')) {
+      if (
+        workspace.getAssistantSettings().liveEnd.enabled &&
+        supports(current.livePlatforms, 'danmaku')
+      ) {
         await assistant.run(current.id, {
           kind: 'liveEnd',
           startedAt: current.liveStartedAt,
@@ -49,10 +57,13 @@ export function createLiveSessions(workspace: Workspace, assistant: Assistant) {
         });
       }
     } finally {
-      workspace.endLiveSession(platform);
-      ending.delete(platform);
+      try {
+        workspace.endLiveSession();
+      } finally {
+        ending = false;
+      }
     }
   }
 
-  return { start, end };
+  return { start, end, isEnding: () => ending };
 }

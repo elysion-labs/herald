@@ -85,7 +85,7 @@ import {
 } from '@/components/ui/trace';
 
 import { attachmentPattern } from '../shared/attachments.ts';
-import { platformLabels, platforms } from '../shared/platforms.ts';
+import { platformLabels } from '../shared/platforms.ts';
 import { AgentCapabilitySettings, SystemPromptSettings } from './agent-settings.tsx';
 import { LiveControl, StartLiveOverlay } from './assistant-mode.tsx';
 import type { Conversation } from './assistant-mode.tsx';
@@ -273,16 +273,16 @@ function Sidebar() {
           <h2>直播助手</h2>
         </div>
         <div className="grid gap-px">
-          {platforms.map(platform => (
-            <AssistantItem
-              key={platform}
-              platform={platform}
-              conversation={conversations?.find(
-                item => item.mode === 'assistant' && item.platform === platform,
-              )}
-              current={homeActive ? current?.id : undefined}
-            />
-          ))}
+          {conversations
+            ?.filter(item => item.mode === 'assistant')
+            .map(conversation => (
+              <AssistantItem
+                key={conversation.id}
+                platform={conversation.platform ?? 'bilibili'}
+                conversation={conversation}
+                current={homeActive ? current?.id : undefined}
+              />
+            ))}
         </div>
         <div className="nav-section">
           <h2>会话</h2>

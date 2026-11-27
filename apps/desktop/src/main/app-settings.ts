@@ -1,8 +1,6 @@
 import { join } from 'node:path';
 
 import { defaultSystemPrompt } from '@herald/agent';
-import { assistantSettings, defaultAssistantSettings } from '@herald/live-assistant/settings';
-import type { AssistantSettings } from '@herald/live-assistant/settings';
 import { eq } from 'drizzle-orm';
 import { shell } from 'electron';
 import type { z } from 'zod';
@@ -40,19 +38,11 @@ export function openAppSettings(db: Database, directory: string) {
 
   const agent = entry<AgentSettings>('agent', agentSettings, defaultAgentSettings);
 
-  const assistant = entry<AssistantSettings>(
-    'assistant',
-    assistantSettings,
-    defaultAssistantSettings,
-  );
-
   return {
     agent: () => agent.read(),
     /** 设置页展示用：当前配置、默认提示词与 pi 资源目录。 */
     agentState: () => ({ ...agent.read(), defaultSystemPrompt, agentDir }),
     saveAgent: (input: Partial<AgentSettings>) => agent.save(input),
-    assistant: () => assistant.read(),
-    saveAssistant: (input: Partial<AssistantSettings>) => assistant.save(input),
     openAgentDir: () => shell.openPath(agentDir),
   };
 }
