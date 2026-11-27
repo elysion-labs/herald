@@ -28,11 +28,24 @@ export interface LiveReminder {
   turns: ReminderTurns;
 }
 
+export type ReminderVerdict = 'adopt' | 'ignore';
+
+export interface ReminderCard {
+  key: number;
+  conversationId: string;
+  trigger: ReminderTrigger;
+  text: string;
+  done: boolean;
+  verdict?: ReminderVerdict;
+}
+
 const ReminderContext = createContext<{
   reminder?: LiveReminder;
   failure?: ReminderFailure;
+  cards: ReminderCard[];
+  resolveCard: (key: number, verdict: ReminderVerdict) => void;
   dismissFailure: () => void;
-}>({ dismissFailure: () => undefined });
+}>({ cards: [], resolveCard: () => undefined, dismissFailure: () => undefined });
 
 const triggerLabels: Record<ReminderTrigger['kind'], string> = {
   silence: '冷场提醒',
@@ -53,9 +66,11 @@ export function ReminderProvider({ children }: { children: ReactNode }) {
   const client = useQueryClient();
   const [reminder, setReminder] = useState<LiveReminder>();
   const [failure, setFailure] = useState<ReminderFailure>();
+  const [cards, setCards] = useState<ReminderCard[]>([]);
 
   useEffect(() => {
     const controller = new AbortController();
+    let key = 0;
 
     async function watch() {
       try {
@@ -66,17 +81,36 @@ export function ReminderProvider({ children }: { children: ReactNode }) {
 
           if (event.phase === 'start') {
             setReminder({ conversationId, trigger: event.trigger, turns: [] });
+            key += 1;
+            const card = { key, conversationId, trigger: event.trigger, text: '', done: false };
+            setCards(current => {
+              const sameSession = current.filter(item => item.conversationId === conversationId);
+              const resolved = sameSession.filter(item => item.verdict).slice(-2);
+
+              return [...resolved, ...sameSession.filter(item => !item.verdict), card];
+            });
           } else if (event.phase === 'update') {
             setReminder(current =>
               current?.conversationId === conversationId
                 ? { ...current, turns: event.turns }
                 : current,
             );
+            const text = event.turns.map(turn => turn.text).join('\n');
+            const currentKey = key;
+            setCards(current =>
+              current.map(card => (card.key === currentKey ? { ...card, text } : card)),
+            );
           } else {
             if (event.error !== undefined) {
               setFailure(event);
             }
 
+            const currentKey = key;
+            setCards(current =>
+              event.delivered
+                ? current.map(card => (card.key === currentKey ? { ...card, done: true } : card))
+                : current.filter(card => card.key !== currentKey),
+            );
             await Promise.all([
               client.invalidateQueries({
                 queryKey: [...workspaceKey(workspaceId), 'history', conversationId],
@@ -102,10 +136,27 @@ export function ReminderProvider({ children }: { children: ReactNode }) {
   }, [client, workspaceId]);
 
   return (
-    <ReminderContext value={{ reminder, failure, dismissFailure: () => setFailure(undefined) }}>
+    <ReminderContext
+      value={{
+        reminder,
+        failure,
+        cards,
+        resolveCard: (key, verdict) =>
+          setCards(current =>
+            current.map(card => (card.key === key ? { ...card, verdict } : card)),
+          ),
+        dismissFailure: () => setFailure(undefined),
+      }}
+    >
       {children}
     </ReminderContext>
   );
+}
+
+export function useReminderCards(conversationId?: string) {
+  const { cards, resolveCard } = useContext(ReminderContext);
+
+  return { cards: cards.filter(card => card.conversationId === conversationId), resolveCard };
 }
 
 export function useLiveReminder(conversationId: string) {

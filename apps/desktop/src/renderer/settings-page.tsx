@@ -56,11 +56,14 @@ export function SettingsPage({
   }
 
   return (
-    <div className="settings-layout">
-      <nav className="settings-menu" aria-label="设置菜单">
+    <>
+      <nav id="workspace-list" className="secondary-pane settings-menu" aria-label="设置菜单">
+        <div className="secondary-heading">
+          <h2>设置</h2>
+        </div>
         {groups.map(group => (
           <section key={group.label} aria-label={group.label}>
-            <h2 className="settings-group-label">{group.label}</h2>
+            <h3 className="settings-group-label">{group.label}</h3>
             <div className="grid gap-0.5">
               {group.items.map(({ id, label, icon: Icon }) => (
                 <Link
@@ -83,13 +86,13 @@ export function SettingsPage({
       </nav>
       <main
         key={active.id}
-        className="page settings-content surface-enter"
+        className="route-content page settings-content"
         aria-label={active.label}
       >
         <div className="settings-stack mx-auto grid max-w-3xl gap-4">
           <Content openLogin={openLogin} />
         </div>
       </main>
-    </div>
+    </>
   );
 }

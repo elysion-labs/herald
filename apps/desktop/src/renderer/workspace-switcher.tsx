@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import WorkspaceIcon from 'kubai-icons-react/icons/folder-open';
-import { ChevronsUpDown, Pencil, Plus, Trash2 } from 'lucide-react';
+import { Pencil, Plus, Trash2 } from 'lucide-react';
 import { useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 
@@ -26,6 +26,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Field, FieldError, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 import { dialogOrigin } from './dialog-origin.ts';
 import { kubaiMixed } from './kubai-colors.ts';
@@ -57,25 +58,31 @@ export function WorkspaceSwitcher({ workspace, workspaces, onSelect }: Workspace
   return (
     <>
       <DropdownMenu modal={false} open={menuOpen} onOpenChange={setMenuOpen}>
-        <DropdownMenuTrigger asChild>
-          <Button
-            ref={trigger}
-            variant="outline"
-            size="sm"
-            className="w-full justify-start gap-2 rounded-lg"
-            aria-label={`工作区：${workspace.name}`}
-          >
-            <WorkspaceIcon
-              size={17}
-              color={kubaiMixed.folder}
-              trigger="parent"
-              aria-hidden="true"
-            />
-            <span className="min-w-0 flex-1 truncate text-left">{workspace.name}</span>
-            <ChevronsUpDown data-icon="inline-end" />
-          </Button>
-        </DropdownMenuTrigger>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <DropdownMenuTrigger asChild>
+              <Button
+                ref={trigger}
+                variant="outline"
+                size="icon-lg"
+                className="workspace-switcher rounded-xl"
+                aria-label={`工作区：${workspace.name}`}
+              >
+                <WorkspaceIcon
+                  size={21}
+                  color={kubaiMixed.folder}
+                  trigger="parent"
+                  aria-hidden="true"
+                />
+              </Button>
+            </DropdownMenuTrigger>
+          </TooltipTrigger>
+          <TooltipContent side="right" sideOffset={8}>
+            {workspace.name}
+          </TooltipContent>
+        </Tooltip>
         <DropdownMenuContent
+          side="right"
           align="start"
           sideOffset={6}
           onCloseAutoFocus={event => {

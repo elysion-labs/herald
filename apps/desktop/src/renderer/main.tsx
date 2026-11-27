@@ -12,7 +12,6 @@ import {
   createRootRoute,
   createRoute,
   createRouter,
-  Link,
   Navigate,
   Outlet,
   RouterProvider,
@@ -20,19 +19,13 @@ import {
   useNavigate,
   useRouter,
 } from '@tanstack/react-router';
-import type { KubaiIconComponent } from 'kubai-icons-react';
-import HomeIcon from 'kubai-icons-react/icons/home';
 import Lightbulb from 'kubai-icons-react/icons/lightbulb';
 import Messages from 'kubai-icons-react/icons/messages';
-import MemoryIcon from 'kubai-icons-react/icons/notebook';
-import BroadcastIcon from 'kubai-icons-react/icons/radio-tower';
-import SettingsIcon from 'kubai-icons-react/icons/sliders';
 import SkillsIcon from 'kubai-icons-react/icons/sparkles';
 import Tv from 'kubai-icons-react/icons/tv';
 import {
   ArrowLeft,
   ArrowRight,
-  AppWindow,
   CircleCheck,
   CircleX,
   LoaderCircle,
@@ -76,7 +69,7 @@ import {
 } from '@/components/ui/trace';
 
 import { attachmentPattern } from '../shared/attachments.ts';
-import { LiveControl, StartLiveOverlay } from './assistant-mode.tsx';
+import { AssistantReminders, LiveControl, StartLiveOverlay } from './assistant-mode.tsx';
 import type { Conversation } from './assistant-mode.tsx';
 import { BrowserPane } from './browser-pane.tsx';
 import { AttachmentChip, ChatComposer } from './chat-composer.tsx';
@@ -86,8 +79,10 @@ import { chatModelKey } from './chat-model-controls.tsx';
 import { usageKey } from './context-usage.tsx';
 import { DanmakuPanel } from './danmaku-panel.tsx';
 import { kubaiMixed } from './kubai-colors.ts';
-import { LiveDuration, PlatformIcons, roomSummary, StatusDot, useRooms } from './live-status.tsx';
-import { MemoryPage } from './memory-page.tsx';
+import { PlatformIcons } from './live-status.tsx';
+import { MemoryPage, memorySearch } from './memory-page.tsx';
+import { desktopTab, NavigationRail } from './navigation-rail.tsx';
+import type { DesktopTab } from './navigation-rail.tsx';
 import { PlatformLoginDialog } from './platform-login-dialog.tsx';
 import { platformAccountKey } from './platform-settings.tsx';
 import {
@@ -98,6 +93,7 @@ import {
 } from './reminders.tsx';
 import type { LiveReminder } from './reminders.tsx';
 import { rpc } from './rpc.ts';
+import { filterSessions, SessionList, sessionSearch } from './session-list.tsx';
 import { SettingsPage, settingsSearch } from './settings-page.tsx';
 import {
   conversationsKey,
@@ -113,7 +109,6 @@ import './style.css';
 
 const activeWorkspaceKey = 'herald-active-workspace';
 const activeChatKey = (id: string) => `herald-active-chat:${id}`;
-type Conversations = Awaited<ReturnType<typeof rpc.conversations.list>>;
 type LiveReplies =
   Awaited<ReturnType<typeof rpc.conversations.send>> extends AsyncIterable<infer Replies>
     ? Replies
@@ -124,25 +119,16 @@ const skills = [
   { id: 'find-trending-videos', label: '找热门视频', icon: Tv, color: kubaiMixed.tv },
 ] as const;
 
-function preferredConversation(workspaceId: string, conversations?: Conversations) {
-  const active = sessionStorage.getItem(activeChatKey(workspaceId));
-
-  return (
-    conversations?.find(item => item.id === active) ??
-    conversations?.find(item => item.mode === 'assistant')
-  );
-}
-
-/** 当前工作台显示的会话：/chat/$id 取路由参数，主页取上次打开的会话。 */
 function useCurrentConversation() {
-  const { id: workspaceId } = useWorkspace();
   const { data } = useConversations();
+  const pathname = useLocation({ select: location => location.pathname });
+  const tab = desktopTab(pathname);
 
-  const id = useLocation({
-    select: ({ pathname }) => (pathname.startsWith('/chat/') ? pathname.slice(6) : undefined),
-  });
+  if (tab === '/live') {
+    return data?.find(item => item.mode === 'assistant');
+  }
 
-  return id ? data?.find(item => item.id === id) : preferredConversation(workspaceId, data);
+  return data?.find(item => pathname === `/chat/${item.id}`);
 }
 
 function useStoredFlag(key: string, initial: boolean) {
@@ -170,37 +156,31 @@ function useCreateConversation() {
       await queryClient.invalidateQueries({ queryKey: conversationsKey(workspaceId) });
 
       if (localStorage.getItem(activeWorkspaceKey) === workspaceId) {
-        await navigate({ to: '/chat/$id', params: { id: conversation.id } });
+        await navigate({ to: '/chat/$id', params: { id: conversation.id }, search: {} });
       }
     },
   });
 }
 
 interface Shell {
-  sidebarOpen: boolean;
-  setSidebarOpen: (open: boolean) => void;
-  browserOpen: boolean;
-  setBrowserOpen: (open: boolean) => void;
   danmakuOpen: boolean;
   setDanmakuOpen: (open: boolean) => void;
   openLogin: (platform: LivePlatform, trigger: HTMLButtonElement) => void;
 }
 
 const shellContext = createContext<Shell>({
-  sidebarOpen: true,
-  setSidebarOpen: () => undefined,
-  browserOpen: true,
-  setBrowserOpen: () => undefined,
-  danmakuOpen: false,
+  danmakuOpen: true,
   setDanmakuOpen: () => undefined,
   openLogin: () => undefined,
 });
 
 function WorkspaceShell({ switcher }: { switcher: React.ReactNode }) {
   const client = useQueryClient();
-  const [sidebarOpen, setSidebarOpen] = useStoredFlag('herald-sidebar-open', true);
+  const tab = useLocation({ select: location => desktopTab(location.pathname) });
+  const hasList = tab === '/chat' || tab === '/memory' || tab === '/settings';
+  const [listOpen, setListOpen] = useStoredFlag('herald-list-open', true);
   const [browserOpen, setBrowserOpen] = useStoredFlag('herald-browser-open', false);
-  const [danmakuOpen, setDanmakuOpen] = useStoredFlag('herald-danmaku-open', false);
+  const [danmakuOpen, setDanmakuOpen] = useStoredFlag('herald-live-danmaku-open', true);
 
   const [login, setLogin] = useState<{
     platform: LivePlatform;
@@ -209,10 +189,6 @@ function WorkspaceShell({ switcher }: { switcher: React.ReactNode }) {
   }>();
 
   const shell: Shell = {
-    sidebarOpen,
-    setSidebarOpen,
-    browserOpen,
-    setBrowserOpen,
     danmakuOpen,
     setDanmakuOpen,
     openLogin: (platform, trigger) => setLogin({ platform, trigger, open: true }),
@@ -220,12 +196,23 @@ function WorkspaceShell({ switcher }: { switcher: React.ReactNode }) {
 
   return (
     <shellContext.Provider value={shell}>
-      <div className="desktop" data-sidebar={sidebarOpen}>
-        <Sidebar switcher={switcher} />
-        <div className="main">
-          <Topbar />
-          <div className="stage">
+      <div className="desktop">
+        <Topbar
+          tab={tab}
+          listOpen={listOpen}
+          onToggleList={hasList ? () => setListOpen(!listOpen) : undefined}
+        />
+        <div className="desktop-body">
+          <NavigationRail switcher={switcher} current={tab} />
+          <div className="stage" data-list={hasList && listOpen}>
             <Outlet />
+            <div className="workspace-browser-layer">
+              <BrowserPane
+                open={browserOpen}
+                full={tab === '/browser'}
+                onOpenChange={setBrowserOpen}
+              />
+            </div>
           </div>
         </div>
         {login && (
@@ -242,216 +229,6 @@ function WorkspaceShell({ switcher }: { switcher: React.ReactNode }) {
         )}
       </div>
     </shellContext.Provider>
-  );
-}
-
-function Sidebar({ switcher }: { switcher: React.ReactNode }) {
-  const { sidebarOpen } = useContext(shellContext);
-  const { data: conversations } = useConversations();
-  const current = useCurrentConversation();
-  const pathname = useLocation({ select: location => location.pathname });
-  const assistant = conversations?.find(item => item.mode === 'assistant');
-  const homeActive = pathname === '/' || pathname.startsWith('/chat/');
-
-  return (
-    <aside className="sidebar" data-collapsed={!sidebarOpen} inert={!sidebarOpen} aria-label="导航">
-      <div className="sidebar-inner">
-        <div className="sidebar-head drag">
-          <WindowNav />
-        </div>
-        <div className="mb-3 px-1">{switcher}</div>
-        <nav className="grid gap-px" aria-label="页面">
-          <NavItem
-            to="/"
-            label="工作台"
-            icon={HomeIcon}
-            color={kubaiMixed.home}
-            current={homeActive && current?.mode !== 'assistant'}
-          />
-          <NavItem
-            to="/memory"
-            label="记忆"
-            icon={MemoryIcon}
-            color={kubaiMixed.notebook}
-            current={pathname === '/memory'}
-          />
-          <NavItem
-            to="/settings"
-            label="设置"
-            icon={SettingsIcon}
-            color={kubaiMixed.sliders}
-            current={pathname === '/settings'}
-          />
-        </nav>
-        {assistant && (
-          <div className="live-rooms">
-            <AssistantItem
-              conversation={assistant}
-              current={homeActive ? current?.id : undefined}
-            />
-          </div>
-        )}
-        <SidebarSessionList
-          conversations={conversations}
-          selectedId={homeActive ? current?.id : undefined}
-        />
-      </div>
-    </aside>
-  );
-}
-
-function SidebarSessionList({
-  conversations,
-  selectedId,
-}: {
-  conversations?: Conversations;
-  selectedId?: string;
-}) {
-  const chats = conversations?.filter(item => item.mode === 'chat');
-
-  return (
-    <>
-      <div className="nav-section">
-        <h2>会话</h2>
-        {chats?.length !== 0 && <NewConversationButton />}
-      </div>
-      <div className="session-list grid content-start gap-px">
-        {chats?.map(item => {
-          const selected = item.id === selectedId;
-
-          return (
-            <Link
-              className="nav-item session-link"
-              aria-label={item.title}
-              data-current={selected}
-              aria-current={selected ? 'page' : undefined}
-              key={item.id}
-              to="/chat/$id"
-              params={{ id: item.id }}
-            >
-              <PlatformIcons platforms={item.livePlatforms} />
-              <span className="min-w-0 flex-1 truncate">{item.title}</span>
-              <time className="session-time" dateTime={new Date(item.createdAt).toISOString()}>
-                {shortTime(item.createdAt)}
-              </time>
-            </Link>
-          );
-        })}
-        {chats?.length === 0 && <SidebarEmpty />}
-      </div>
-    </>
-  );
-}
-
-function shortTime(timestamp: number) {
-  const date = new Date(timestamp);
-  const today = new Date().toDateString() === date.toDateString();
-
-  return today
-    ? date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
-    : date.toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' });
-}
-
-function SidebarEmpty() {
-  return (
-    <Empty className="items-start gap-1 rounded-none p-2 text-left">
-      <EmptyHeader className="flex-row gap-2">
-        <EmptyMedia className="mb-0">
-          <Messages size={16} color={kubaiMixed.empty} aria-hidden="true" />
-        </EmptyMedia>
-        <EmptyDescription className="text-xs">还没有会话</EmptyDescription>
-      </EmptyHeader>
-      <EmptyContent className="items-start">
-        <NewConversationButton labelled />
-      </EmptyContent>
-    </Empty>
-  );
-}
-
-function NavItem({
-  to,
-  label,
-  icon: Icon,
-  color,
-  current,
-}: {
-  to: '/' | '/memory' | '/settings';
-  label: string;
-  icon: KubaiIconComponent;
-  color: string;
-  current: boolean;
-}) {
-  return (
-    <Link
-      to={to}
-      className="nav-item"
-      data-current={current}
-      aria-current={current ? 'page' : undefined}
-    >
-      <Icon size={17} color={color} trigger="parent" />
-      {label}
-    </Link>
-  );
-}
-
-function NewConversationButton({ labelled = false }: { labelled?: boolean }) {
-  const create = useCreateConversation();
-
-  return (
-    <>
-      <Button
-        variant={labelled ? 'link' : 'ghost'}
-        size={labelled ? 'xs' : 'icon-xs'}
-        className={labelled ? 'rounded-sm !px-0' : 'text-muted-foreground -mr-1 rounded-md'}
-        aria-label="新建会话"
-        disabled={create.isPending}
-        onClick={() => create.mutate()}
-      >
-        <Plus data-icon="inline-start" />
-        {labelled && '新建会话'}
-      </Button>
-      {create.isError && (
-        <p role="alert" className="error">
-          {create.error.message}
-        </p>
-      )}
-    </>
-  );
-}
-
-function AssistantItem({
-  conversation,
-  current,
-}: {
-  conversation: Conversation;
-  current?: string;
-}) {
-  const { data: rooms } = useRooms();
-  const selected = conversation.id === current;
-  const startedAt = conversation.liveStartedAt;
-  const roomStatus = rooms?.map(roomSummary).join('；');
-  const connected = rooms?.find(room => room.state === 'connected') ?? rooms?.[0];
-
-  return (
-    <Link
-      to="/chat/$id"
-      params={{ id: conversation.id }}
-      className="nav-item assistant-nav-item"
-      data-current={selected}
-      aria-current={selected ? 'page' : undefined}
-    >
-      <BroadcastIcon size={17} color={kubaiMixed.broadcast} trigger="parent" aria-hidden="true" />
-      <span className="flex-1 truncate">直播助手</span>
-      {startedAt && (
-        <span className="text-muted-foreground text-xs">
-          <LiveDuration startedAt={startedAt} />
-        </span>
-      )}
-      <PlatformIcons platforms={conversation.livePlatforms} size={13} />
-      {connected && <StatusDot room={connected} />}
-      {rooms?.length === 0 && <span className="text-muted-foreground text-xs">未绑定</span>}
-      {roomStatus && <span className="sr-only">{roomStatus}</span>}
-    </Link>
   );
 }
 
@@ -487,7 +264,6 @@ function useHistoryPosition() {
 }
 
 function WindowNav() {
-  const { sidebarOpen, setSidebarOpen } = useContext(shellContext);
   const history = useHistoryPosition();
 
   return (
@@ -495,8 +271,8 @@ function WindowNav() {
       <Button
         variant="ghost"
         size="icon-sm"
-        aria-label="后退"
-        title="后退"
+        className="rounded-lg"
+        aria-label="后退页面"
         disabled={!history.canBack}
         onClick={history.back}
       >
@@ -505,81 +281,80 @@ function WindowNav() {
       <Button
         variant="ghost"
         size="icon-sm"
-        aria-label="前进"
-        title="前进"
+        className="rounded-lg"
+        aria-label="前进页面"
         disabled={!history.canForward}
         onClick={history.forward}
       >
         <ArrowRight />
       </Button>
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        aria-label={sidebarOpen ? '收起侧栏' : '展开侧栏'}
-        title={sidebarOpen ? '收起侧栏' : '展开侧栏'}
-        onClick={() => setSidebarOpen(!sidebarOpen)}
-      >
-        <PanelLeft />
-      </Button>
     </div>
   );
 }
 
-function Topbar() {
-  const { sidebarOpen, browserOpen, setBrowserOpen, danmakuOpen, setDanmakuOpen } =
-    useContext(shellContext);
+const pageTitles: Record<DesktopTab, string> = {
+  '/live': '直播',
+  '/chat': '会话',
+  '/browser': '浏览器',
+  '/memory': '记忆',
+  '/settings': '设置',
+};
 
-  const isAssistant = useCurrentConversation()?.mode === 'assistant';
-
-  const pathname = useLocation({ select: location => location.pathname });
-  const titles: Record<string, string> = { '/memory': '记忆', '/settings': '设置' };
-  const pageTitle = titles[pathname];
-
+function Topbar({
+  tab,
+  listOpen,
+  onToggleList,
+}: {
+  tab: DesktopTab;
+  listOpen: boolean;
+  onToggleList?: () => void;
+}) {
   return (
     <header className="topbar drag">
-      {!sidebarOpen && <WindowNav />}
-      {pageTitle ? (
-        <h1 key={pathname} className="topbar-title text-sm font-medium">
-          {pageTitle}
-        </h1>
-      ) : (
-        <>
-          <ConversationTitle />
-          <span className="ml-auto" />
-          {isAssistant && (
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              className="text-muted-foreground hover:text-foreground aria-pressed:text-foreground"
-              aria-pressed={danmakuOpen}
-              aria-label={danmakuOpen ? '隐藏实时弹幕' : '显示实时弹幕'}
-              title={danmakuOpen ? '隐藏实时弹幕' : '显示实时弹幕'}
-              onClick={() => setDanmakuOpen(!danmakuOpen)}
-            >
-              <MessageSquareText />
-            </Button>
-          )}
+      <div className="window-rail-control">
+        {onToggleList && (
           <Button
             variant="ghost"
             size="icon-sm"
-            className="text-muted-foreground hover:text-foreground"
-            aria-pressed={browserOpen}
-            aria-label={browserOpen ? '隐藏浏览器浮窗' : '显示浏览器浮窗'}
-            onClick={() => setBrowserOpen(!browserOpen)}
+            className="text-muted-foreground rounded-lg"
+            aria-label={listOpen ? '收起第二栏' : '展开第二栏'}
+            aria-controls="workspace-list"
+            aria-expanded={listOpen}
+            onClick={onToggleList}
           >
-            <AppWindow />
+            <PanelLeft />
           </Button>
-        </>
-      )}
+        )}
+      </div>
+      <WindowNav />
+      <ConversationTitle tab={tab} />
+      {tab === '/live' && <LivePanelToggle />}
     </header>
   );
 }
 
-function ConversationTitle() {
+function LivePanelToggle() {
+  const { danmakuOpen, setDanmakuOpen } = useContext(shellContext);
+
+  return (
+    <Button
+      variant="ghost"
+      size="icon-sm"
+      className="text-muted-foreground hover:text-foreground aria-pressed:text-foreground ml-auto rounded-lg"
+      aria-pressed={danmakuOpen}
+      aria-label={danmakuOpen ? '隐藏实时弹幕' : '显示实时弹幕'}
+      onClick={() => setDanmakuOpen(!danmakuOpen)}
+    >
+      <MessageSquareText />
+    </Button>
+  );
+}
+
+function ConversationTitle({ tab }: { tab: DesktopTab }) {
   const conversation = useCurrentConversation();
 
   if (!conversation) {
-    return <h1 className="text-sm font-medium">工作台</h1>;
+    return <h1 className="text-sm font-medium">{pageTitles[tab]}</h1>;
   }
 
   return (
@@ -587,35 +362,34 @@ function ConversationTitle() {
       {conversation.mode === 'chat' && (
         <PlatformIcons platforms={conversation.livePlatforms} size={16} />
       )}
-      <h1 className="truncate text-sm font-medium" title={conversation.title}>
-        {conversation.title}
-      </h1>
+      <h1 className="truncate text-sm font-medium">{conversation.title}</h1>
       {conversation.mode === 'assistant' && <LiveControl conversation={conversation} />}
     </div>
   );
 }
 
-function HomeLayout() {
-  const { browserOpen, setBrowserOpen, danmakuOpen, setDanmakuOpen } = useContext(shellContext);
-  const conversation = useCurrentConversation();
-  const showDanmaku = danmakuOpen && conversation?.mode === 'assistant';
-  const workbench = useRef<HTMLDivElement>(null);
+function LivePage() {
+  const { danmakuOpen, setDanmakuOpen } = useContext(shellContext);
+  const query = useConversations();
+  const conversation = query.data?.find(item => item.mode === 'assistant');
+
+  if (!conversation) {
+    return (
+      <main className="route-content page">
+        <p role={query.error ? 'alert' : 'status'} className="text-muted-foreground text-sm">
+          {query.error?.message ?? '正在读取直播助手…'}
+        </p>
+      </main>
+    );
+  }
 
   return (
-    <div ref={workbench} className="workbench relative h-full min-w-0 flex-1">
-      <ResizablePanelGroup className="h-full" orientation="horizontal" id="herald-workbench">
+    <div className="route-content live-page">
+      <ResizablePanelGroup className="h-full" orientation="horizontal" id="herald-live">
         <ResizablePanel id="conversation" minSize="300px">
-          <main className="flex h-full min-w-0 flex-col">
-            <ReminderFailureCard
-              conversationId={conversation?.id}
-              isAssistant={conversation?.mode === 'assistant'}
-            />
-            <div className="relative min-h-0 flex-1">
-              <Outlet />
-            </div>
-          </main>
+          <ConversationBody conversation={conversation} />
         </ResizablePanel>
-        {showDanmaku && conversation && (
+        {danmakuOpen && (
           <>
             <ResizableHandle className="workbench-divider" aria-label="调整实时弹幕宽度" />
             <ResizablePanel id="danmaku" defaultSize="260px" minSize="220px" maxSize="40%">
@@ -628,51 +402,101 @@ function HomeLayout() {
           </>
         )}
       </ResizablePanelGroup>
-      <BrowserPane open={browserOpen} onOpenChange={setBrowserOpen} />
     </div>
   );
 }
 
-function Home() {
-  const { id: workspaceId } = useWorkspace();
-  const { data: conversations, error, isPending } = useConversations();
-  const current = preferredConversation(workspaceId, conversations);
+function ConversationBody({ conversation }: { conversation: Conversation }) {
+  return (
+    <main className="flex h-full min-w-0 flex-col" aria-label="会话内容">
+      <ReminderFailureCard
+        conversationId={conversation.id}
+        isAssistant={conversation.mode === 'assistant'}
+      />
+      {conversation.mode === 'chat' && conversation.liveStartedAt && (
+        <div className="mx-auto w-full max-w-3xl">
+          <AssistantReminders conversationId={conversation.id} />
+        </div>
+      )}
+      <div className="relative min-h-0 flex-1">
+        <ChatSession key={conversation.id} id={conversation.id} />
+      </div>
+    </main>
+  );
+}
+
+function ChatLayout() {
+  const query = useConversations();
+  const search = chatLayoutRoute.useSearch();
   const create = useCreateConversation();
 
-  if (current) {
-    return <ChatSession key={current.id} id={current.id} />;
+  return (
+    <>
+      <SessionList
+        conversations={filterSessions(query.data, search)}
+        search={search}
+        error={create.error ?? query.error}
+        create={() => create.mutate()}
+        creating={create.isPending}
+      />
+      <div className="route-content">
+        <Outlet />
+      </div>
+    </>
+  );
+}
+
+function ChatHome() {
+  const { id: workspaceId } = useWorkspace();
+  const query = useConversations();
+  const search = chatLayoutRoute.useSearch();
+  const chats = filterSessions(query.data, search);
+  const stored = sessionStorage.getItem(activeChatKey(workspaceId));
+  const selected = chats?.find(item => item.id === stored) ?? chats?.[0];
+
+  if (selected) {
+    return <Navigate to="/chat/$id" params={{ id: selected.id }} search={search} replace />;
   }
 
-  let emptyTitle = '开始一场直播会话';
-
-  if (error) {
-    emptyTitle = '无法读取会话';
-  } else if (isPending) {
-    emptyTitle = '正在读取会话';
+  if (!query.isSuccess) {
+    return (
+      <p role={query.error ? 'alert' : 'status'} className="text-muted-foreground p-6 text-sm">
+        {query.error?.message ?? '正在读取会话…'}
+      </p>
+    );
   }
+
+  return <EmptySessions archivedOnly={search.filter === 'live'} />;
+}
+
+function EmptySessions({ archivedOnly }: { archivedOnly: boolean }) {
+  const create = useCreateConversation();
 
   return (
     <Empty className="surface-enter h-full">
       <EmptyHeader>
         <EmptyMedia>
-          <Messages size={40} color={kubaiMixed.messages} />
+          <Messages size={32} color={kubaiMixed.empty} aria-hidden="true" />
         </EmptyMedia>
         <EmptyTitle role="heading" aria-level={2}>
-          {emptyTitle}
+          {archivedOnly ? '暂无往期直播' : '开始一段对话'}
         </EmptyTitle>
-        {(!isPending || error) && (
-          <EmptyDescription>
-            {error?.message ?? '在工作区绑定直播间，即可让 Herald 结合弹幕陪你接话、找话题。'}
-          </EmptyDescription>
-        )}
+        <EmptyDescription>
+          {archivedOnly ? '下播后，本场会话会归档到这里。' : '新建会话，向 Herald 提问。'}
+        </EmptyDescription>
       </EmptyHeader>
-      {!isPending && !error && (
-        <EmptyContent className="flex-row justify-center">
+      {!archivedOnly && (
+        <EmptyContent>
           <Button variant="outline" disabled={create.isPending} onClick={() => create.mutate()}>
             <Plus data-icon="inline-start" />
             新建会话
           </Button>
         </EmptyContent>
+      )}
+      {create.error && (
+        <p role="alert" className="error">
+          {create.error.message}
+        </p>
       )}
     </Empty>
   );
@@ -681,24 +505,34 @@ function Home() {
 function Chat() {
   const { id } = chatRoute.useParams();
   const { id: workspaceId } = useWorkspace();
+  const search = chatLayoutRoute.useSearch();
   const query = useConversations();
-  const exists = query.data?.some(item => item.id === id);
+  const conversation = query.data?.find(item => item.id === id);
+  const isChat = conversation?.mode === 'chat';
 
   useEffect(() => {
-    if (exists) {
+    if (isChat) {
       sessionStorage.setItem(activeChatKey(workspaceId), id);
     }
-  }, [exists, id, workspaceId]);
+  }, [isChat, id, workspaceId]);
 
   if (!query.isSuccess) {
     return (
-      <p role={query.isError ? 'alert' : 'status'} className="text-muted-foreground p-6 text-sm">
+      <p role={query.error ? 'alert' : 'status'} className="text-muted-foreground p-6 text-sm">
         {query.error?.message ?? '正在读取会话…'}
       </p>
     );
   }
 
-  return exists ? <ChatSession key={id} id={id} /> : <Navigate to="/" replace />;
+  if (!conversation) {
+    return <Navigate to="/chat" search={search} replace />;
+  }
+
+  return isChat ? (
+    <ConversationBody conversation={conversation} />
+  ) : (
+    <Navigate to="/live" replace />
+  );
 }
 
 const skillById = new Map<string, (typeof skills)[number]>(skills.map(item => [item.id, item]));
@@ -970,6 +804,48 @@ function useStartLiveOverlay(conversation?: Conversation) {
   return { visible, dismiss: () => setPreparing(true) };
 }
 
+function useComposerPlacement(
+  body: React.RefObject<HTMLDivElement | null>,
+  composer: React.RefObject<HTMLDivElement | null>,
+  centered: boolean,
+) {
+  useLayoutEffect(() => {
+    const viewport = body.current;
+    const overlay = composer.current;
+
+    if (!viewport || !overlay) {
+      return;
+    }
+
+    const stage = viewport.closest<HTMLElement>('.stage');
+
+    const update = () => {
+      const bounds = overlay.getBoundingClientRect();
+      const clearance = `${Math.ceil(bounds.height) + 12}px`;
+
+      viewport.style.setProperty('--composer-clearance', centered ? '0px' : clearance);
+
+      if (centered && stage) {
+        const bottom = Math.ceil(bounds.bottom - stage.getBoundingClientRect().top);
+        stage.style.setProperty('--conversation-float-top', `${bottom + 12}px`);
+      } else {
+        stage?.style.setProperty('--conversation-composer-clearance', clearance);
+      }
+    };
+
+    const observer = new ResizeObserver(update);
+    observer.observe(viewport);
+    observer.observe(overlay);
+    update();
+
+    return () => {
+      observer.disconnect();
+      stage?.style.removeProperty('--conversation-float-top');
+      stage?.style.removeProperty('--conversation-composer-clearance');
+    };
+  }, [body, composer, centered]);
+}
+
 function ChatSession({ id }: { id: string }) {
   const { id: workspaceId } = useWorkspace();
   const input = useRef<HTMLTextAreaElement>(null);
@@ -1011,32 +887,10 @@ function ChatSession({ id }: { id: string }) {
     },
   });
 
-  useLayoutEffect(() => {
-    const viewport = chatBody.current;
-    const overlay = composer.current;
+  const centered =
+    !startOverlay.visible && history.data?.length === 0 && !send.isPending && !reminder;
 
-    if (!viewport || !overlay) {
-      return;
-    }
-
-    const workbench = viewport.closest<HTMLElement>('.workbench');
-
-    const update = () => {
-      const clearance = `${Math.ceil(overlay.getBoundingClientRect().height) + 12}px`;
-
-      viewport.style.setProperty('--composer-clearance', clearance);
-      workbench?.style.setProperty('--workbench-composer-clearance', clearance);
-    };
-
-    const observer = new ResizeObserver(update);
-    observer.observe(overlay);
-    update();
-
-    return () => {
-      observer.disconnect();
-      workbench?.style.removeProperty('--workbench-composer-clearance');
-    };
-  }, []);
+  useComposerPlacement(chatBody, composer, centered);
 
   return (
     <section className="chat surface-enter" aria-label="对话">
@@ -1049,20 +903,13 @@ function ChatSession({ id }: { id: string }) {
           reminder={reminder}
         />
         {startOverlay.visible && <StartLiveOverlay onDismiss={startOverlay.dismiss} />}
-        {!startOverlay.visible && history.data?.length === 0 && !send.isPending && !reminder && (
-          <Empty className="chat-empty p-4">
-            <EmptyHeader className="gap-1">
-              <EmptyMedia className="mb-1">
-                <Messages size={28} color={kubaiMixed.empty} aria-hidden="true" />
-              </EmptyMedia>
-              <EmptyTitle className="text-sm">还没有消息</EmptyTitle>
-              <EmptyDescription className="text-xs">
-                发一条消息，或添加图片和文本文件。
-              </EmptyDescription>
-            </EmptyHeader>
-          </Empty>
-        )}
-        <div ref={composer} className="chat-composer" inert={startOverlay.visible}>
+        <div
+          ref={composer}
+          className="chat-composer"
+          data-centered={centered}
+          inert={startOverlay.visible}
+        >
+          {centered && <h2 className="chat-welcome">今天想聊点什么？</h2>}
           {send.isError && (
             <p role="alert" className="error pointer-events-auto mx-auto max-w-3xl px-6">
               {send.error.message}
@@ -1129,7 +976,9 @@ function WorkspaceRoot() {
     setSelected(id);
 
     if (pathname.startsWith('/chat/')) {
-      void navigate({ to: '/', replace: true });
+      void navigate({ to: '/chat', search: {}, replace: true });
+    } else if (pathname === '/memory') {
+      void navigate({ to: '/memory', search: {}, replace: true });
     }
   }
 
@@ -1148,22 +997,41 @@ function WorkspaceRoot() {
 
 const rootRoute = createRootRoute({ component: WorkspaceRoot });
 
-const homeLayoutRoute = createRoute({
+const homeRoute = createRoute({
   getParentRoute: () => rootRoute,
-  id: 'home',
-  component: HomeLayout,
+  path: '/',
+  component: () => <Navigate to="/live" replace />,
+});
+
+const liveRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/live',
+  component: LivePage,
+});
+
+const chatLayoutRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/chat',
+  component: ChatLayout,
+  validateSearch: sessionSearch,
 });
 
 const sessionsRoute = createRoute({
-  getParentRoute: () => homeLayoutRoute,
+  getParentRoute: () => chatLayoutRoute,
   path: '/',
-  component: Home,
+  component: ChatHome,
 });
 
 const chatRoute = createRoute({
-  getParentRoute: () => homeLayoutRoute,
-  path: '/chat/$id',
+  getParentRoute: () => chatLayoutRoute,
+  path: '$id',
   component: Chat,
+});
+
+const browserRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/browser',
+  component: () => null,
 });
 
 const settingsRoute = createRoute({
@@ -1173,15 +1041,31 @@ const settingsRoute = createRoute({
   component: SettingsRoutePage,
 });
 
+function MemoryRoutePage() {
+  const { scope, id } = memoryRoute.useSearch();
+  const navigate = memoryRoute.useNavigate();
+
+  return (
+    <MemoryPage
+      selected={scope && id ? { scope, id } : undefined}
+      onSelect={selection => void navigate({ search: selection ?? {} })}
+    />
+  );
+}
+
 const memoryRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/memory',
-  component: MemoryPage,
+  validateSearch: memorySearch,
+  component: MemoryRoutePage,
 });
 
 const router = createRouter({
   routeTree: rootRoute.addChildren([
-    homeLayoutRoute.addChildren([sessionsRoute, chatRoute]),
+    homeRoute,
+    liveRoute,
+    chatLayoutRoute.addChildren([sessionsRoute, chatRoute]),
+    browserRoute,
     settingsRoute,
     memoryRoute,
   ]),

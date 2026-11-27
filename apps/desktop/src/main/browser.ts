@@ -354,7 +354,7 @@ export function createWorkspaceBrowser(window: BrowserWindow) {
     const { width, height } = view.getBounds();
 
     if (width < 1 || height < 1) {
-      throw new Error('网页预览尚未取得尺寸，请先打开主页中的预览。');
+      throw new Error('网页预览尚未取得尺寸，请先打开浏览器页或画中画。');
     }
 
     const url = contents.getURL();

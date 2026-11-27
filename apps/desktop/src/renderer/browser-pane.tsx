@@ -1,5 +1,6 @@
 import type { BrowserTab } from '@herald/browser-tool';
 import { useMutation } from '@tanstack/react-query';
+import { Link } from '@tanstack/react-router';
 import Globe from 'kubai-icons-react/icons/globe';
 import {
   ArrowLeft,
@@ -7,7 +8,6 @@ import {
   GripVertical,
   LoaderCircle,
   Maximize2,
-  Minimize2,
   Minus,
   Plus,
   RotateCw,
@@ -202,6 +202,7 @@ function useNativeBounds(
   surface: RefObject<HTMLDivElement | null>,
   enabled: boolean,
   { x, y, width, height }: BrowserLayout['frame'],
+  full: boolean,
 ) {
   const lastBounds = useRef('');
 
@@ -245,6 +246,12 @@ function useNativeBounds(
     const observer = new ResizeObserver(sync);
     const portals = new MutationObserver(sync);
     observer.observe(node);
+    const layer = node.closest('.workspace-browser-layer');
+
+    if (layer) {
+      observer.observe(layer);
+    }
+
     portals.observe(document.body, { childList: true });
     window.addEventListener('resize', sync);
     sync();
@@ -254,7 +261,7 @@ function useNativeBounds(
       portals.disconnect();
       window.removeEventListener('resize', sync);
     };
-  }, [enabled, surface, x, y, width, height]);
+  }, [enabled, surface, x, y, width, height, full]);
 
   useLayoutEffect(
     () => () => {
@@ -266,15 +273,22 @@ function useNativeBounds(
 
 export function BrowserPane({
   open,
+  full,
   onOpenChange,
 }: {
   open: boolean;
+  full: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
   const layout = useBrowserWindow();
   const surface = useRef<HTMLDivElement>(null);
+  const wasFull = useRef(full);
 
   const state = useBrowserState(() => {
+    if (full) {
+      return;
+    }
+
     if (layout.mode === 'capsule') {
       layout.setMode('pip');
     }
@@ -283,34 +297,46 @@ export function BrowserPane({
   });
 
   const { frame, mode, moving } = layout;
-  const visible = open && frame.width > 0 && frame.height > 0;
+  const visible = !full && open && state.tabs.length > 0 && frame.width > 0 && frame.height > 0;
   const currentTab = state.tabs.find(tab => tab.id === state.activeId);
   const title = tabLabel(currentTab, '浏览器');
 
-  useNativeBounds(surface, visible && mode !== 'capsule' && !moving, frame);
+  useEffect(() => {
+    const leaving = wasFull.current && !full;
+    wasFull.current = full;
+
+    if (leaving && state.url) {
+      onOpenChange(true);
+    }
+  }, [full, onOpenChange, state.url]);
+
+  useNativeBounds(surface, full || (visible && mode !== 'capsule' && !moving), frame, full);
 
   return (
-    <div ref={layout.areaRef} className="browser-float-area">
-      {visible && (
-        <aside
-          className="browser-float"
-          aria-label="网页浏览器"
-          data-mode={mode}
-          data-moving={moving}
-          data-pointer-inside={state.pointerInside}
-          style={{ left: frame.x, top: frame.y, width: frame.width, height: frame.height }}
-        >
-          <BrowserFrame
-            layout={layout}
-            state={state}
-            surface={surface}
-            title={title}
-            favicon={currentTab?.favicon}
-            onClose={() => onOpenChange(false)}
-          />
-        </aside>
-      )}
-    </div>
+    <>
+      {full && <FullBrowser state={state} surface={surface} />}
+      <div ref={layout.areaRef} className="browser-float-area">
+        {visible && (
+          <aside
+            className="browser-float"
+            aria-label="网页浏览器"
+            data-mode={mode}
+            data-moving={moving}
+            data-pointer-inside={state.pointerInside}
+            style={{ left: frame.x, top: frame.y, width: frame.width, height: frame.height }}
+          >
+            <BrowserFrame
+              layout={layout}
+              state={state}
+              surface={surface}
+              title={title}
+              favicon={currentTab?.favicon}
+              onClose={() => onOpenChange(false)}
+            />
+          </aside>
+        )}
+      </div>
+    </>
   );
 }
 
@@ -334,7 +360,7 @@ function BrowserTitle({
         onPointerDown={event => layout.begin(event, 'move')}
         {...layout.pointerEvents}
       >
-        {mode !== 'expanded' && <GripVertical className="size-3.5 shrink-0" aria-hidden="true" />}
+        <GripVertical className="size-3.5 shrink-0" aria-hidden="true" />
         {favicon && <img src={favicon} alt="" referrerPolicy="no-referrer" className="size-3.5" />}
         <span className="truncate">{title}</span>
       </span>
@@ -356,19 +382,59 @@ function BrowserTitle({
   );
 }
 
-const modeActions = {
-  pip: { label: '展开浏览器', next: 'expanded', Icon: Maximize2 },
-  expanded: { label: '还原为画中画', next: 'pip', Icon: Minimize2 },
-  capsule: { label: '恢复画中画', next: 'pip', Icon: Maximize2 },
-} as const;
-
 function BrowserModeButton({ mode, setMode }: Pick<BrowserLayout, 'mode' | 'setMode'>) {
-  const { label, next, Icon } = modeActions[mode];
+  if (mode === 'pip') {
+    return (
+      <Button asChild variant="ghost" size="icon-xs" aria-label="打开浏览器页">
+        <Link to="/browser">
+          <Maximize2 />
+        </Link>
+      </Button>
+    );
+  }
 
   return (
-    <Button variant="ghost" size="icon-xs" aria-label={label} onClick={() => setMode(next)}>
-      <Icon />
+    <Button variant="ghost" size="icon-xs" aria-label="恢复画中画" onClick={() => setMode('pip')}>
+      <Maximize2 />
     </Button>
+  );
+}
+
+function FullBrowser({
+  state,
+  surface,
+}: {
+  state: BrowserState;
+  surface: RefObject<HTMLDivElement | null>;
+}) {
+  return (
+    <main className="browser-full" aria-label="浏览器">
+      <div className="browser-full-controls">
+        <BrowserControls state={state} />
+      </div>
+      <div className="browser-full-area">
+        <div
+          className="browser-full-surface"
+          id="browser-viewport"
+          ref={surface}
+          aria-label="当前网页"
+        >
+          {!state.url && (
+            <Empty className="h-full p-5">
+              <EmptyHeader>
+                <EmptyMedia>
+                  <Globe size={32} color={kubaiMixed.empty} aria-hidden="true" />
+                </EmptyMedia>
+                <EmptyTitle className="text-sm">打开网页</EmptyTitle>
+                <EmptyDescription className="text-xs">
+                  输入网址，或让 Herald 打开网页。
+                </EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          )}
+        </div>
+      </div>
+    </main>
   );
 }
 

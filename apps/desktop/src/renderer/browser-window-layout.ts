@@ -10,7 +10,9 @@ const minWidth = 264;
 const snapDistance = 24;
 
 const layoutSchema = z.object({
-  mode: z.enum(['pip', 'capsule', 'expanded']),
+  mode: z
+    .enum(['pip', 'capsule', 'expanded'])
+    .transform(mode => (mode === 'expanded' ? 'pip' : mode)),
   width: z.number().positive(),
   x: z.number().min(0).max(1),
   y: z.number().min(0).max(1),
@@ -68,13 +70,12 @@ function frameFor(layout: Layout, area: Size): Frame {
     };
   }
 
-  const expanded = layout.mode === 'expanded';
-  const width = expanded ? limit : clamp(layout.width, limit);
+  const width = clamp(layout.width, limit);
   const height = Math.round(width / ratio);
 
   return {
-    x: Math.round((area.width - width) * (expanded ? 0.5 : layout.x)),
-    y: Math.round((area.height - height) * (expanded ? 0.5 : layout.y)),
+    x: Math.round((area.width - width) * layout.x),
+    y: Math.round((area.height - height) * layout.y),
     width,
     height,
   };
@@ -156,7 +157,7 @@ export function useBrowserWindow() {
   }
 
   function begin(event: PointerEvent<HTMLElement>, kind: GestureKind) {
-    if (event.button !== 0 || gesture.current || layout.mode === 'expanded') {
+    if (event.button !== 0 || gesture.current) {
       return;
     }
 

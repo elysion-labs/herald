@@ -1,16 +1,16 @@
 import { describeTrigger, reminderPlatform } from '@herald/live-assistant/settings';
-import type { ReminderTrigger } from '@herald/live-assistant/settings';
 import { useIsMutating, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import BroadcastIcon from 'kubai-icons-react/icons/radio-tower';
 import { ThumbsDown, ThumbsUp } from 'lucide-react';
-import { useEffect, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 
 import { kubaiMixed } from './kubai-colors.ts';
 import { LiveDuration, RoomIndicators, useRooms } from './live-status.tsx';
 import { PlatformIcon } from './platform-icon.tsx';
+import { useReminderCards } from './reminders.tsx';
+import type { ReminderCard, ReminderVerdict } from './reminders.tsx';
 import { rpc } from './rpc.ts';
 import { conversationsKey, useWorkspace, workspaceKey } from './workspace-context.ts';
 
@@ -18,82 +18,26 @@ export type Conversation = Awaited<ReturnType<typeof rpc.conversations.list>>[nu
 
 /** 弹幕栏顶部：当前助手会话的实时提醒卡片。 */
 export function AssistantReminders({ conversationId }: { conversationId: string }) {
-  return <ReminderCards conversationId={conversationId} cards={useReminderCards(conversationId)} />;
-}
+  const { cards } = useReminderCards(conversationId);
 
-interface ReminderCard {
-  key: number;
-  trigger: ReminderTrigger;
-  text: string;
-  done: boolean;
-}
-
-type Verdict = 'adopt' | 'ignore';
-
-const keepCards = 3;
-
-/** 弹幕面板里的提醒卡片：只看该平台助手会话的提醒，模型判定无需提醒的自动移除。 */
-function useReminderCards(conversationId: string) {
-  const { id: workspaceId } = useWorkspace();
-  const [cards, setCards] = useState<ReminderCard[]>([]);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    let key = 0;
-
-    async function watch() {
-      try {
-        const stream = await rpc.assistant.watch({ workspaceId }, { signal: controller.signal });
-
-        for await (const event of stream) {
-          if (event.conversationId !== conversationId) {
-            continue;
-          }
-
-          if (event.phase === 'start') {
-            key += 1;
-            const card = { key, trigger: event.trigger, text: '', done: false };
-            setCards(current => [...current, card].slice(-keepCards));
-          } else if (event.phase === 'update') {
-            const text = event.turns.map(turn => turn.text).join('\n');
-            setCards(current => current.map(card => (card.key === key ? { ...card, text } : card)));
-          } else if (event.delivered) {
-            setCards(current =>
-              current.map(card => (card.key === key ? { ...card, done: true } : card)),
-            );
-          } else {
-            setCards(current => current.filter(card => card.key !== key));
-          }
-        }
-      } catch (error) {
-        if (!controller.signal.aborted) {
-          console.error('提醒订阅失败', error);
-        }
-      }
-    }
-
-    void watch();
-
-    return () => controller.abort();
-  }, [conversationId, workspaceId]);
-
-  return cards;
+  return <ReminderCards conversationId={conversationId} cards={cards} />;
 }
 
 /** 采纳 / 忽略：反馈会在该会话下次运行时交给 agent，用于调整之后的建议。 */
 function CardFeedback({ conversationId, card }: { conversationId: string; card: ReminderCard }) {
   const { id: workspaceId } = useWorkspace();
-  const [verdict, setVerdict] = useState<Verdict>();
+  const { resolveCard } = useReminderCards(conversationId);
+  const { verdict } = card;
 
   const send = useMutation({
-    mutationFn: (next: Verdict) =>
+    mutationFn: (next: ReminderVerdict) =>
       rpc.assistant.feedback({
         workspaceId,
         conversationId,
         verdict: next,
         summary: `${describeTrigger(card.trigger)}：${card.text.slice(0, 120)}`.slice(0, 300),
       }),
-    onSuccess: (_, next) => setVerdict(next),
+    onSuccess: (_, next) => resolveCard(card.key, next),
   });
 
   if (verdict) {
@@ -142,7 +86,10 @@ function ReminderCards({
   }
 
   return (
-    <ol className="grid gap-1.5 px-3 pb-2" aria-label="助手提醒">
+    <ol
+      className="grid max-h-[40%] shrink-0 gap-1.5 overflow-y-auto px-3 pb-2"
+      aria-label="助手提醒"
+    >
       {cards.map(card => {
         const platform = reminderPlatform(card.trigger);
         const title = describeTrigger(card.trigger);

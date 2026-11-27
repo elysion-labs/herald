@@ -1,4 +1,10 @@
-import { keepPreviousData, useMutation, useQueries, useQueryClient } from '@tanstack/react-query';
+import {
+  keepPreviousData,
+  useMutation,
+  useQueries,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
 import Globe from 'kubai-icons-react/icons/globe';
 import { ChevronRight, Plus, Quote, Search, Trash2 } from 'lucide-react';
 import { useDeferredValue, useRef, useState } from 'react';
@@ -44,11 +50,49 @@ type MemoryRemove = Omit<Parameters<typeof rpc.memory.remove>[0], 'workspaceId'>
 type MemoryRecord = Awaited<ReturnType<typeof rpc.memory.save>>;
 type MemoryScope = MemorySave['scope'];
 
-export function MemoryPage() {
+interface MemorySelection {
+  scope: MemoryScope;
+  id: string;
+}
+
+export function memorySearch(search: Record<string, unknown>): Partial<MemorySelection> {
+  const scope = scopes.find(value => value === search.scope);
+
+  return scope && typeof search.id === 'string' && search.id ? { scope, id: search.id } : {};
+}
+
+function useSelectedMemory(
+  workspaceId: string,
+  scope: MemoryScope,
+  id: string | undefined,
+  search: string,
+  visibleRecords?: MemoryRecord[],
+) {
+  const unfiltered = useQuery({
+    queryKey: [...workspaceKey(workspaceId), 'memory', scope, ''],
+    queryFn: async () => ({
+      matches: await rpc.memory.list({ workspaceId, scope }),
+    }),
+    enabled: Boolean(id && search),
+  });
+
+  return (
+    visibleRecords?.find(item => item.id === id) ??
+    unfiltered.data?.matches.find(item => item.id === id)
+  );
+}
+
+export function MemoryPage({
+  selected,
+  onSelect,
+}: {
+  selected?: MemorySelection;
+  onSelect: (selection?: MemorySelection) => void;
+}) {
   const { id: workspaceId } = useWorkspace();
   const [searchText, setSearchText] = useState('');
+  const [searching, setSearching] = useState(false);
   const search = useDeferredValue(searchText.trim());
-  const [selected, setSelected] = useState<{ scope: MemoryScope; id: string }>();
   const [collapsed, setCollapsed] = useState<MemoryScope[]>([]);
 
   const groups = useQueries({
@@ -63,65 +107,96 @@ export function MemoryPage() {
   });
 
   const total = groups.reduce((sum, group) => sum + (group.data?.matches.length ?? 0), 0);
+  const selectedScope = selected?.scope ?? 'shared';
+  const visibleRecords = groups[scopes.indexOf(selectedScope)]?.data?.matches;
 
-  const record = selected
-    ? groups[scopes.indexOf(selected.scope)]?.data?.matches.find(item => item.id === selected.id)
-    : undefined;
+  const record = useSelectedMemory(
+    workspaceId,
+    selectedScope,
+    selected?.id,
+    search,
+    visibleRecords,
+  );
 
   return (
-    <main className="surface-enter flex h-full min-h-0 w-full">
-      <aside className="border-border flex w-80 shrink-0 flex-col border-r" aria-label="记忆列表">
-        <div className="flex items-center gap-1.5 px-3 pt-3 pb-2">
-          <InputGroup className="h-8 flex-1">
+    <>
+      <aside id="workspace-list" className="secondary-pane" aria-label="记忆列表">
+        <div className="secondary-heading">
+          <h2>记忆</h2>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className="secondary-icon-button"
+            aria-label="搜索记忆"
+            aria-expanded={searching}
+            onClick={() => {
+              setSearching(!searching);
+
+              if (searching) {
+                setSearchText('');
+              }
+            }}
+          >
+            <Search />
+          </Button>
+        </div>
+        {searching && (
+          <InputGroup className="secondary-search h-8 rounded-lg">
             <InputGroupAddon>
               <Search />
             </InputGroupAddon>
             <InputGroupInput
               aria-label="搜索记忆"
-              placeholder="搜索内容、原文或 UID"
+              placeholder="搜索记忆"
               value={searchText}
+              autoFocus
               maxLength={240}
               onChange={event => setSearchText(event.target.value)}
             />
           </InputGroup>
-          <CaptureDialog
-            scope={selected?.scope ?? 'shared'}
-            onSaved={saved => {
-              setCollapsed(current => current.filter(item => item !== saved.scope));
-              setSelected({ scope: saved.scope, id: saved.id });
-              setSearchText('');
-            }}
-          />
-        </div>
+        )}
+        <CaptureDialog
+          scope={selectedScope}
+          onSaved={saved => {
+            setCollapsed(current => current.filter(item => item !== saved.scope));
+            onSelect({ scope: saved.scope, id: saved.id });
+            setSearchText('');
+          }}
+        />
         <div className="memory-list grid min-h-0 flex-1 content-start gap-1 overflow-y-auto px-2 pb-2">
           {scopes.map((scope, index) => (
-            <MemoryGroup
-              key={scope}
-              scope={scope}
-              group={groups[index]}
-              search={search}
-              open={!collapsed.includes(scope)}
-              selectedId={selected?.scope === scope ? selected.id : undefined}
-              onOpenChange={next =>
-                setCollapsed(current =>
-                  next ? current.filter(item => item !== scope) : [...current, scope],
-                )
-              }
-              onSelect={id => setSelected({ scope, id })}
-            />
+            <div key={scope}>
+              {index === 1 && <h2 className="settings-group-label mt-3">观众</h2>}
+              <MemoryGroup
+                scope={scope}
+                group={groups[index]}
+                search={search}
+                open={!collapsed.includes(scope)}
+                selectedId={selected?.scope === scope ? selected.id : undefined}
+                onOpenChange={next =>
+                  setCollapsed(current =>
+                    next ? current.filter(item => item !== scope) : [...current, scope],
+                  )
+                }
+                onSelect={id => onSelect({ scope, id })}
+              />
+            </div>
           ))}
         </div>
       </aside>
-      <section className="memory-list flex min-w-0 flex-1 flex-col" aria-label="记忆详情">
+      <section
+        className="route-content memory-list flex min-w-0 flex-1 flex-col"
+        aria-label="记忆详情"
+      >
         {record ? (
-          <MemoryPreview key={record.id} record={record} onRemoved={() => setSelected(undefined)} />
+          <MemoryPreview key={record.id} record={record} onRemoved={() => onSelect()} />
         ) : (
           <p className="text-muted-foreground grid flex-1 place-items-center text-sm">
             {total ? '选择左侧记忆查看详情' : '暂无记忆'}
           </p>
         )}
       </section>
-    </main>
+    </>
   );
 }
 
@@ -155,9 +230,9 @@ function MemoryGroup({
   return (
     <Collapsible open={open} onOpenChange={onOpenChange}>
       <CollapsibleTrigger className="memory-group-trigger">
-        <ChevronRight className="memory-group-chevron" />
         <ScopeIcon scope={scope} />
         <span className="text-[13px] font-medium">{groupLabels[scope]}</span>
+        <ChevronRight className="memory-group-chevron" aria-hidden="true" />
         <span className="text-muted-foreground ml-auto text-[11px] tabular-nums">
           {group?.isSuccess ? records.length : ''}
         </span>
@@ -223,26 +298,12 @@ function MemoryRow({
       type="button"
       data-selected={selected}
       aria-pressed={selected}
-      className="memory-row hover:bg-secondary/60 data-[selected=true]:bg-secondary focus-visible:ring-ring grid min-w-0 gap-0.5 rounded-lg py-2 pr-2.5 pl-9 text-left transition-colors outline-none focus-visible:ring-1"
+      className="memory-row hover:bg-secondary/60 data-[selected=true]:bg-secondary focus-visible:ring-ring min-w-0 rounded-lg py-1.5 pr-2.5 pl-7 text-left transition-colors outline-none focus-visible:ring-1"
       onClick={onSelect}
     >
-      <span className="line-clamp-2 text-[13px] leading-snug">{record.fact}</span>
-      <span className="text-muted-foreground flex min-w-0 gap-1.5 text-[11px]">
-        <span className="truncate">
-          {record.viewerId ? `UID ${record.viewerId}` : evidenceLabels[record.evidence.type]}
-        </span>
-        <span className="ml-auto shrink-0 tabular-nums">{shortDate(record.createdAt)}</span>
-      </span>
+      <span className="block truncate text-[13px]">{record.fact}</span>
     </button>
   );
-}
-
-function shortDate(timestamp: number) {
-  const date = new Date(timestamp);
-
-  return new Date().getFullYear() === date.getFullYear()
-    ? date.toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })
-    : date.toLocaleDateString('zh-CN');
 }
 
 function ScopeIcon({ scope }: { scope: MemoryScope }) {
@@ -331,12 +392,12 @@ function CaptureDialog({
         <Button
           ref={trigger}
           variant="ghost"
-          size="icon-sm"
-          className="text-muted-foreground"
+          size="sm"
+          className="secondary-primary-action"
           aria-label="手动录入记忆"
-          title="手动录入"
         >
-          <Plus />
+          <Plus data-icon="inline-start" />
+          录入记忆
         </Button>
       </DialogTrigger>
       <DialogContent className="login-dialog" style={origin}>
