@@ -22,6 +22,7 @@ import { ChatModelControls } from './chat-model-controls.tsx';
 import { ContextUsage } from './context-usage.tsx';
 import { QuickPrompts } from './quick-prompts.tsx';
 import { rpc } from './rpc.ts';
+import { useWorkspace } from './workspace-context.ts';
 
 export interface ComposerMessage {
   text: string;
@@ -85,6 +86,7 @@ export function ChatComposer({
   locked: boolean;
   onSend: (message: ComposerMessage) => Promise<unknown>;
 }) {
+  const { id: workspaceId } = useWorkspace();
   const picker = useRef<HTMLInputElement>(null);
   const [text, setText] = useState('');
   const [drafts, setDrafts] = useState<Draft[]>([]);
@@ -97,7 +99,7 @@ export function ChatComposer({
 
     if (conversation?.mode === 'assistant' && now - typingReported.current > 3000) {
       typingReported.current = now;
-      void rpc.assistant.typing(id).catch(() => undefined);
+      void rpc.assistant.typing({ workspaceId, id }).catch(() => undefined);
     }
   }
 

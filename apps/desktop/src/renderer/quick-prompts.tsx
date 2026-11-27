@@ -12,11 +12,12 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { InputGroupButton } from '@/components/ui/input-group';
 
-import { platformLabels, platforms } from '../shared/platforms.ts';
+import { platformLabels } from '../shared/platforms.ts';
 import type { Conversation } from './assistant-mode.tsx';
-import { useRoom } from './live-status.tsx';
+import { useRooms } from './live-status.tsx';
 import { PlatformIcon } from './platform-icon.tsx';
 import { rpc } from './rpc.ts';
+import { useWorkspace } from './workspace-context.ts';
 
 type Profile = NonNullable<Awaited<ReturnType<typeof rpc.rooms.profile>>>;
 
@@ -57,13 +58,10 @@ function ProfileItem({
   disabled: boolean;
   onSelect: (platform: LivePlatform) => void;
 }) {
-  const { data: room } = useRoom(platform);
-
   return (
-    <DropdownMenuItem disabled={disabled || !room} onSelect={() => onSelect(platform)}>
+    <DropdownMenuItem disabled={disabled} onSelect={() => onSelect(platform)}>
       <PlatformIcon platform={platform} size={16} />
       分析{platformLabels[platform]}主播信息
-      {!room && <span className="text-muted-foreground ml-auto text-xs">未绑定</span>}
     </DropdownMenuItem>
   );
 }
@@ -78,9 +76,12 @@ export function QuickPrompts({
   disabled: boolean;
   onSend: (text: string) => Promise<unknown>;
 }) {
+  const { id: workspaceId } = useWorkspace();
+  const { data: rooms } = useRooms();
+
   const analyze = useMutation({
     async mutationFn(platform: LivePlatform) {
-      const profile = await rpc.rooms.profile(platform);
+      const profile = await rpc.rooms.profile({ workspaceId, platform });
 
       if (!profile) {
         throw new Error(`${platformLabels[platform]}还没有绑定直播间`);
@@ -90,8 +91,8 @@ export function QuickPrompts({
     },
   });
 
-  const assistant = conversation?.mode === 'assistant' ? conversation.platform : null;
-  const targets = assistant ? [assistant] : platforms;
+  const assistant = conversation?.mode === 'assistant';
+  const targets = rooms?.map(room => room.platform) ?? [];
   const busy = disabled || analyze.isPending;
 
   return (
@@ -101,7 +102,7 @@ export function QuickPrompts({
           type="button"
           variant="ghost"
           size="sm"
-          disabled={busy}
+          disabled={busy || !targets.length}
           title={analyze.error?.message ?? '快捷指令'}
         >
           <Zap />

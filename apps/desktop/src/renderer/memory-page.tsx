@@ -33,17 +33,19 @@ import { dialogOrigin } from './dialog-origin.ts';
 import { kubaiMixed } from './kubai-colors.ts';
 import { PlatformIcon } from './platform-icon.tsx';
 import { rpc } from './rpc.ts';
+import { useWorkspace, workspaceKey } from './workspace-context.ts';
 
 const evidenceLabels = { manual: '手动录入', streamer: '主播提供', danmaku: '弹幕自述' };
 const scopes = ['shared', ...platforms] as const;
-const scopeLabels = { shared: '全局记忆', ...platformLabels };
-const groupLabels = { shared: '全局', ...platformLabels };
-type MemorySave = Parameters<typeof rpc.memory.save>[0];
-type MemoryRemove = Parameters<typeof rpc.memory.remove>[0];
+const scopeLabels = { shared: '通用记忆', ...platformLabels };
+const groupLabels = { shared: '通用', ...platformLabels };
+type MemorySave = Omit<Parameters<typeof rpc.memory.save>[0], 'workspaceId'>;
+type MemoryRemove = Omit<Parameters<typeof rpc.memory.remove>[0], 'workspaceId'>;
 type MemoryRecord = Awaited<ReturnType<typeof rpc.memory.save>>;
 type MemoryScope = MemorySave['scope'];
 
 export function MemoryPage() {
+  const { id: workspaceId } = useWorkspace();
   const [searchText, setSearchText] = useState('');
   const search = useDeferredValue(searchText.trim());
   const [selected, setSelected] = useState<{ scope: MemoryScope; id: string }>();
@@ -51,11 +53,11 @@ export function MemoryPage() {
 
   const groups = useQueries({
     queries: scopes.map(scope => ({
-      queryKey: ['memory', scope, search],
+      queryKey: [...workspaceKey(workspaceId), 'memory', scope, search],
       queryFn: async () =>
         search
-          ? rpc.memory.search({ scope, query: search })
-          : { matches: await rpc.memory.list(scope) },
+          ? rpc.memory.search({ workspaceId, scope, query: search })
+          : { matches: await rpc.memory.list({ workspaceId, scope }) },
       placeholderData: keepPreviousData,
     })),
   });
@@ -295,17 +297,20 @@ function CaptureDialog({
   onSaved: (record: MemoryRecord) => void;
 }) {
   const client = useQueryClient();
+  const { id: workspaceId } = useWorkspace();
   const trigger = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
   const [origin, setOrigin] = useState<CSSProperties>();
   const [target, setTarget] = useState(scope);
 
   const save = useMutation({
-    mutationFn: (input: MemorySave) => rpc.memory.save(input),
+    mutationFn: (input: MemorySave) => rpc.memory.save({ workspaceId, ...input }),
     async onSuccess(record) {
       setOpen(false);
       onSaved(record);
-      await client.invalidateQueries({ queryKey: ['memory', record.scope] });
+      await client.invalidateQueries({
+        queryKey: [...workspaceKey(workspaceId), 'memory', record.scope],
+      });
     },
   });
 
@@ -392,13 +397,16 @@ function CaptureDialog({
 
 function MemoryPreview({ record, onRemoved }: { record: MemoryRecord; onRemoved: () => void }) {
   const client = useQueryClient();
+  const { id: workspaceId } = useWorkspace();
   const [confirmRemove, setConfirmRemove] = useState(false);
 
   const remove = useMutation({
-    mutationFn: (input: MemoryRemove) => rpc.memory.remove(input),
+    mutationFn: (input: MemoryRemove) => rpc.memory.remove({ workspaceId, ...input }),
     async onSuccess(_, input) {
       onRemoved();
-      await client.invalidateQueries({ queryKey: ['memory', input.scope] });
+      await client.invalidateQueries({
+        queryKey: [...workspaceKey(workspaceId), 'memory', input.scope],
+      });
     },
   });
 

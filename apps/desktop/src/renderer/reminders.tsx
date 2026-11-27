@@ -4,7 +4,9 @@ import BellRing from 'kubai-icons-react/icons/bell-ring';
 import { LoaderCircle } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
+import { PlatformIcon } from './platform-icon.tsx';
 import { rpc } from './rpc.ts';
+import { useWorkspace } from './workspace-context.ts';
 
 type AssistantEvent =
   Awaited<ReturnType<typeof rpc.assistant.watch>> extends AsyncIterable<infer Event>
@@ -36,6 +38,7 @@ const triggerLabels: Record<ReminderTrigger['kind'], string> = {
  * 模型判断无需提醒（SKIP）时后端会撤销这条提醒，界面上也随之消失。
  */
 export function useLiveReminder(conversationId: string, onSettled: () => Promise<unknown>) {
+  const { id: workspaceId } = useWorkspace();
   const [reminder, setReminder] = useState<LiveReminder>();
 
   useEffect(() => {
@@ -43,7 +46,7 @@ export function useLiveReminder(conversationId: string, onSettled: () => Promise
 
     async function watch() {
       try {
-        const stream = await rpc.assistant.watch(undefined, { signal: controller.signal });
+        const stream = await rpc.assistant.watch({ workspaceId }, { signal: controller.signal });
 
         for await (const event of stream) {
           if (event.conversationId !== conversationId) {
@@ -69,7 +72,7 @@ export function useLiveReminder(conversationId: string, onSettled: () => Promise
     void watch();
 
     return () => controller.abort();
-  }, [conversationId, onSettled]);
+  }, [conversationId, onSettled, workspaceId]);
 
   return reminder;
 }
@@ -85,7 +88,11 @@ export function ReminderItem({
   return (
     <div className="reminder-item mx-auto flex w-full max-w-3xl items-center gap-2 px-6 pb-3">
       <span className="bg-secondary/70 flex min-w-0 items-center gap-2 rounded-full py-1 pr-3 pl-1.5 text-xs">
-        <BellRing size={16} color="#F59E0B" className="shrink-0" />
+        {'platform' in trigger ? (
+          <PlatformIcon platform={trigger.platform} size={16} />
+        ) : (
+          <BellRing size={16} color="#F59E0B" className="shrink-0" />
+        )}
         <span className="text-foreground/90 shrink-0 font-medium">
           {triggerLabels[trigger.kind]}
         </span>

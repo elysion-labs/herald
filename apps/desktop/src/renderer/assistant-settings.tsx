@@ -8,9 +8,9 @@ import { Field, FieldContent, FieldDescription, FieldLabel } from '@/components/
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 
+import { useRooms } from './live-status.tsx';
 import { rpc } from './rpc.ts';
-
-const queryKey = ['assistant-settings'];
+import { useWorkspace, workspaceKey } from './workspace-context.ts';
 
 const capabilitiesQuery = {
   queryKey: ['live-capabilities'],
@@ -49,10 +49,13 @@ function capabilityAvailability(
 
 function useAssistantSettings() {
   const client = useQueryClient();
-  const query = useQuery({ queryKey, queryFn: () => rpc.assistant.settings() });
+  const { id: workspaceId } = useWorkspace();
+  const queryKey = [...workspaceKey(workspaceId), 'assistant-settings'];
+  const query = useQuery({ queryKey, queryFn: () => rpc.assistant.settings({ workspaceId }) });
 
   const save = useMutation({
-    mutationFn: (input: Partial<AssistantSettings>) => rpc.assistant.saveSettings(input),
+    mutationFn: (input: Partial<AssistantSettings>) =>
+      rpc.assistant.saveSettings({ workspaceId, settings: input }),
     onSuccess: saved => client.setQueryData(queryKey, saved),
   });
 
@@ -389,11 +392,16 @@ function HeatSettings({
 export function AssistantSettingsPanel() {
   const { query, save } = useAssistantSettings();
   const capabilities = useQuery(capabilitiesQuery);
+  const rooms = useRooms();
   const settings = query.data;
-  const platforms = capabilities.data;
-  const error = query.error ?? capabilities.error;
 
-  if (!settings || !platforms) {
+  const platforms = capabilities.data?.filter(platform =>
+    rooms.data?.some(room => room.platform === platform.id),
+  );
+
+  const error = query.error ?? capabilities.error ?? rooms.error;
+
+  if (!settings || !platforms || !rooms.data) {
     return (
       <p role={error ? 'alert' : 'status'} className="text-muted-foreground text-sm">
         {error?.message ?? '正在加载…'}
@@ -417,6 +425,7 @@ function AssistantSettingsCard({
   platforms,
   error,
 }: InteractionSettingsProps & { error: Error | null }) {
+  const { name } = useWorkspace();
   const { silence, memoryViewers, keywords, periodic, liveStart, liveEnd, welcome } = settings;
   const danmaku = capabilityAvailability(platforms, '弹幕', 'danmaku');
   const welcomeEvent = capabilityAvailability(platforms, '新观众欢迎', 'danmaku', 'welcome');
@@ -426,15 +435,17 @@ function AssistantSettingsCard({
     <Card>
       <CardHeader>
         <CardTitle>直播助手</CardTitle>
-        <CardDescription>
-          只对侧栏顶部的平台助手会话生效：满足下列条件时，Herald 会结合新弹幕和记忆主动给出建议。
-        </CardDescription>
+        <CardDescription>当前工作区 · {name}</CardDescription>
       </CardHeader>
       <CardContent className="grid gap-5">
+        {!platforms.length && (
+          <p className="text-muted-foreground text-sm">绑定直播间后可以配置对应的提醒。</p>
+        )}
         <RuleRow
           id="rule-live-start"
           label="开播话题推荐"
           description="点击「开播」后结合记忆、待办、历史场次和平台热门，推荐本场可以聊的话题"
+          availability={danmaku}
           checked={liveStart.enabled}
           onCheckedChange={enabled => save({ liveStart: { enabled } })}
         />
@@ -566,6 +577,7 @@ function AssistantSettingsCard({
             value={settings.cooldownSeconds}
             min={15}
             max={3600}
+            disabled={danmaku.disabled}
             onCommit={cooldownSeconds => save({ cooldownSeconds })}
           />
         </Field>

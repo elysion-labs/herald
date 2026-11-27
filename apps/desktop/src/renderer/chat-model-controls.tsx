@@ -25,6 +25,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import type { ChatModelChoice } from '../shared/model-settings.ts';
 import { modelCatalogQuery } from './model-settings.tsx';
 import { rpc } from './rpc.ts';
+import { useWorkspace, workspaceKey } from './workspace-context.ts';
 
 const levels = {
   off: '关闭',
@@ -36,22 +37,28 @@ const levels = {
   max: '最高',
 };
 
-export function chatModelKey(id: string) {
-  return ['chat-model-choice', id];
+export function chatModelKey(workspaceId: string, id: string) {
+  return [...workspaceKey(workspaceId), 'chat-model-choice', id];
 }
 
 export function ChatModelControls({ id, disabled }: { id: string; disabled: boolean }) {
   const client = useQueryClient();
   const catalog = useQuery(modelCatalogQuery);
-  const queryKey = chatModelKey(id);
-  const choice = useQuery({ queryKey, queryFn: async () => (await rpc.models.choice(id)) ?? null });
+  const { id: workspaceId } = useWorkspace();
+  const queryKey = chatModelKey(workspaceId, id);
+
+  const choice = useQuery({
+    queryKey,
+    queryFn: async () => (await rpc.models.choice({ workspaceId, id })) ?? null,
+  });
+
   const [open, setOpen] = useState(false);
   const current = choice.data ?? catalog.data?.defaultChoice;
   const { providers, label, thinking } = modelPickerState(catalog.data?.providers, current);
 
   const save = useMutation({
     mutationKey: queryKey,
-    mutationFn: (next: ChatModelChoice) => rpc.models.select({ id, choice: next }),
+    mutationFn: (next: ChatModelChoice) => rpc.models.select({ workspaceId, id, choice: next }),
     onSuccess(next) {
       client.setQueryData(queryKey, next);
       setOpen(false);

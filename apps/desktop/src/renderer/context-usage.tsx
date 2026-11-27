@@ -4,10 +4,15 @@ import { useState } from 'react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 
 import { rpc } from './rpc.ts';
+import { useWorkspace, workspaceKey } from './workspace-context.ts';
 
 type Usage = Awaited<ReturnType<typeof rpc.conversations.usage>>;
 
-export const usageKey = (id: string) => ['usage', id];
+export const usageKey = (workspaceId: string, id: string) => [
+  ...workspaceKey(workspaceId),
+  'usage',
+  id,
+];
 
 const compact = new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 });
 const warnAt = 0.8;
@@ -98,7 +103,13 @@ function UsageDetails({ usage }: { usage?: Usage }) {
 
 /** 发送按钮旁的上下文占用圆环，悬停查看窗口占用、累计 token 与费用。 */
 export function ContextUsage({ id }: { id: string }) {
-  const { data } = useQuery({ queryKey: usageKey(id), queryFn: () => rpc.conversations.usage(id) });
+  const { id: workspaceId } = useWorkspace();
+
+  const { data } = useQuery({
+    queryKey: usageKey(workspaceId, id),
+    queryFn: () => rpc.conversations.usage({ workspaceId, id }),
+  });
+
   const ratio = usageRatio(data);
   const [open, setOpen] = useState(false);
 

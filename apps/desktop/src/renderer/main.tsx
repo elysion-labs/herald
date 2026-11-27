@@ -13,11 +13,11 @@ import {
   createRoute,
   createRouter,
   Link,
+  Navigate,
   Outlet,
   RouterProvider,
   useLocation,
   useNavigate,
-  useParams,
   useRouter,
 } from '@tanstack/react-router';
 import type { KubaiIconComponent } from 'kubai-icons-react';
@@ -85,7 +85,6 @@ import {
 } from '@/components/ui/trace';
 
 import { attachmentPattern } from '../shared/attachments.ts';
-import { platformLabels } from '../shared/platforms.ts';
 import { AgentCapabilitySettings, SystemPromptSettings } from './agent-settings.tsx';
 import { LiveControl, StartLiveOverlay } from './assistant-mode.tsx';
 import type { Conversation } from './assistant-mode.tsx';
@@ -98,20 +97,32 @@ import { chatModelKey } from './chat-model-controls.tsx';
 import { usageKey } from './context-usage.tsx';
 import { DanmakuPanel } from './danmaku-panel.tsx';
 import { kubaiMixed } from './kubai-colors.ts';
-import { roomSummary, statusLabels, StatusDot, useRoom } from './live-status.tsx';
+import { PlatformIcons, RoomIndicators, roomSummary, useRooms } from './live-status.tsx';
 import { MemoryPage } from './memory-page.tsx';
 import { ModelSettings } from './model-settings.tsx';
-import { PlatformIcon } from './platform-icon.tsx';
 import { PlatformLoginDialog } from './platform-login-dialog.tsx';
-import { platformAccountKey, PlatformSettings } from './platform-settings.tsx';
+import {
+  platformAccountKey,
+  PlatformSettings,
+  WorkspaceRoomSettings,
+} from './platform-settings.tsx';
 import { ReminderItem, useLiveReminder } from './reminders.tsx';
 import type { LiveReminder } from './reminders.tsx';
 import { rpc } from './rpc.ts';
+import {
+  conversationsKey,
+  useConversations,
+  useWorkspace,
+  WorkspaceContext,
+  workspaceKey,
+  workspaceListQuery,
+} from './workspace-context.ts';
+import { WorkspaceSwitcher } from './workspace-switcher.tsx';
 
 import './style.css';
 
-const conversationsQuery = { queryKey: ['conversations'], queryFn: () => rpc.conversations.list() };
-const activeChatKey = 'herald-active-chat';
+const activeWorkspaceKey = 'herald-active-workspace';
+const activeChatKey = (id: string) => `herald-active-chat:${id}`;
 type Conversations = Awaited<ReturnType<typeof rpc.conversations.list>>;
 type LiveReplies =
   Awaited<ReturnType<typeof rpc.conversations.send>> extends AsyncIterable<infer Replies>
@@ -123,18 +134,25 @@ const skills = [
   { id: 'find-trending-videos', label: '找热门视频', icon: Tv, color: kubaiMixed.tv },
 ] as const;
 
-function preferredConversation(conversations?: Conversations) {
-  const active = sessionStorage.getItem(activeChatKey);
+function preferredConversation(workspaceId: string, conversations?: Conversations) {
+  const active = sessionStorage.getItem(activeChatKey(workspaceId));
 
-  return conversations?.find(item => item.id === active) ?? conversations?.[0];
+  return (
+    conversations?.find(item => item.id === active) ??
+    conversations?.find(item => item.mode === 'assistant')
+  );
 }
 
 /** 当前工作台显示的会话：/chat/$id 取路由参数，主页取上次打开的会话。 */
 function useCurrentConversation() {
-  const { data } = useQuery(conversationsQuery);
-  const { id } = useParams({ strict: false });
+  const { id: workspaceId } = useWorkspace();
+  const { data } = useConversations();
 
-  return id ? data?.find(item => item.id === id) : preferredConversation(data);
+  const id = useLocation({
+    select: ({ pathname }) => (pathname.startsWith('/chat/') ? pathname.slice(6) : undefined),
+  });
+
+  return id ? data?.find(item => item.id === id) : preferredConversation(workspaceId, data);
 }
 
 function useStoredFlag(key: string, initial: boolean) {
@@ -152,14 +170,18 @@ function useStoredFlag(key: string, initial: boolean) {
 }
 
 function useCreateConversation() {
+  const { id: workspaceId } = useWorkspace();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
 
   return useMutation({
-    mutationFn: () => rpc.conversations.create(),
+    mutationFn: () => rpc.conversations.create({ workspaceId }),
     async onSuccess(conversation) {
-      await queryClient.invalidateQueries(conversationsQuery);
-      await navigate({ to: '/chat/$id', params: { id: conversation.id } });
+      await queryClient.invalidateQueries({ queryKey: conversationsKey(workspaceId) });
+
+      if (localStorage.getItem(activeWorkspaceKey) === workspaceId) {
+        await navigate({ to: '/chat/$id', params: { id: conversation.id } });
+      }
     },
   });
 }
@@ -184,7 +206,7 @@ const shellContext = createContext<Shell>({
   openLogin: () => undefined,
 });
 
-function Workspace() {
+function WorkspaceShell({ switcher }: { switcher: React.ReactNode }) {
   const client = useQueryClient();
   const [sidebarOpen, setSidebarOpen] = useStoredFlag('herald-sidebar-open', true);
   const [browserOpen, setBrowserOpen] = useStoredFlag('herald-browser-open', true);
@@ -209,7 +231,7 @@ function Workspace() {
   return (
     <shellContext.Provider value={shell}>
       <div className="desktop" data-sidebar={sidebarOpen}>
-        <Sidebar />
+        <Sidebar switcher={switcher} />
         <div className="main">
           <Topbar />
           <div className="stage">
@@ -233,11 +255,12 @@ function Workspace() {
   );
 }
 
-function Sidebar() {
+function Sidebar({ switcher }: { switcher: React.ReactNode }) {
   const { sidebarOpen } = useContext(shellContext);
-  const { data: conversations } = useQuery(conversationsQuery);
+  const { data: conversations } = useConversations();
   const current = useCurrentConversation();
   const pathname = useLocation({ select: location => location.pathname });
+  const assistant = conversations?.find(item => item.mode === 'assistant');
   const homeActive = pathname === '/' || pathname.startsWith('/chat/');
 
   return (
@@ -246,6 +269,7 @@ function Sidebar() {
         <div className="sidebar-head drag">
           <WindowNav />
         </div>
+        <div className="mb-3 px-1">{switcher}</div>
         <nav className="grid gap-px" aria-label="页面">
           <NavItem
             to="/"
@@ -269,21 +293,14 @@ function Sidebar() {
             current={pathname === '/settings'}
           />
         </nav>
-        <div className="nav-section">
-          <h2>直播助手</h2>
-        </div>
-        <div className="grid gap-px">
-          {conversations
-            ?.filter(item => item.mode === 'assistant')
-            .map(conversation => (
-              <AssistantItem
-                key={conversation.id}
-                platform={conversation.platform ?? 'bilibili'}
-                conversation={conversation}
-                current={homeActive ? current?.id : undefined}
-              />
-            ))}
-        </div>
+        {assistant && (
+          <div className="live-rooms">
+            <AssistantItem
+              conversation={assistant}
+              current={homeActive ? current?.id : undefined}
+            />
+          </div>
+        )}
         <div className="nav-section">
           <h2>会话</h2>
           <NewConversationButton />
@@ -304,7 +321,7 @@ function Sidebar() {
                   to="/chat/$id"
                   params={{ id: item.id }}
                 >
-                  {item.platform && <PlatformIcon platform={item.platform} />}
+                  <PlatformIcons platforms={item.livePlatforms} />
                   <span className="min-w-0 flex-1 truncate">{item.title}</span>
                   <time className="session-time" dateTime={new Date(item.createdAt).toISOString()}>
                     {shortTime(item.createdAt)}
@@ -381,35 +398,19 @@ function NewConversationButton() {
   );
 }
 
-/** 固定在侧栏顶部的平台助手会话，附带直播间连接状态。 */
+/** 工作区的助手会话，附带已绑定的房间状态。 */
 function AssistantItem({
-  platform,
   conversation,
   current,
 }: {
-  platform: LivePlatform;
-  conversation?: Conversation;
+  conversation: Conversation;
   current?: string;
 }) {
-  const { data } = useRoom(platform);
-  const selected = Boolean(conversation) && conversation?.id === current;
-  const liveLabel = conversation?.liveStartedAt ? ' · 直播中' : '';
-  const detail = data ? `${data.roomId} · ${statusLabels[data.state]}${liveLabel}` : '未绑定直播间';
-
-  const body = (
-    <>
-      <PlatformIcon platform={platform} size={16} />
-      <span className="grid min-w-0 flex-1 leading-tight">
-        <span className="truncate text-[13px]">{platformLabels[platform]}助手</span>
-        <span className="text-muted-foreground truncate text-[11px] tabular-nums">{detail}</span>
-      </span>
-      <StatusDot room={data} />
-    </>
-  );
-
-  if (!conversation) {
-    return <div className="live-room opacity-60">{body}</div>;
-  }
+  const { data: rooms } = useRooms();
+  const selected = conversation.id === current;
+  const live = conversation.liveStartedAt ? '直播中 · ' : '';
+  const detail = rooms?.length ? `${live}${rooms.length} 个直播间` : '未绑定直播间';
+  const status = rooms?.map(roomSummary).join('；');
 
   return (
     <Link
@@ -418,9 +419,14 @@ function AssistantItem({
       className="live-room"
       data-current={selected}
       aria-current={selected ? 'page' : undefined}
-      aria-label={`${platformLabels[platform]}助手：${detail}`}
+      aria-label={`直播助手，${detail}`}
+      title={status}
     >
-      {body}
+      <span className="grid min-w-0 flex-1 leading-tight">
+        <span className="truncate text-[13px]">直播助手</span>
+        <span className="text-muted-foreground truncate text-[11px] tabular-nums">{detail}</span>
+      </span>
+      <RoomIndicators rooms={rooms} compact />
     </Link>
   );
 }
@@ -555,28 +561,14 @@ function ConversationTitle() {
 
   return (
     <div key={conversation.id} className="topbar-title flex min-w-0 items-center gap-2.5">
-      {conversation.platform && <PlatformIcon platform={conversation.platform} size={16} />}
+      {conversation.mode === 'chat' && (
+        <PlatformIcons platforms={conversation.livePlatforms} size={16} />
+      )}
       <h1 className="truncate text-sm font-medium" title={conversation.title}>
         {conversation.title}
       </h1>
-      {conversation.platform && <LiveBadge platform={conversation.platform} />}
       {conversation.mode === 'assistant' && <LiveControl conversation={conversation} />}
     </div>
-  );
-}
-
-function LiveBadge({ platform }: { platform: LivePlatform }) {
-  const { data } = useRoom(platform);
-
-  return (
-    <Link
-      to="/settings"
-      className="border-border text-muted-foreground hover:text-foreground flex shrink-0 items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs transition-colors"
-      title="管理直播间"
-    >
-      <StatusDot room={data} />
-      {roomSummary(data)}
-    </Link>
   );
 }
 
@@ -630,14 +622,13 @@ function HomeLayout() {
             <Outlet />
           </main>
         </ResizablePanel>
-        {showDanmaku && conversation?.platform && (
+        {showDanmaku && conversation && (
           <>
             <ResizableHandle className="workbench-divider" aria-label="调整实时弹幕宽度" />
             <ResizablePanel id="danmaku" defaultSize="22%" minSize="240px" maxSize="40%">
               <DanmakuPanel
                 key={conversation.id}
                 conversationId={conversation.id}
-                platform={conversation.platform}
                 onClose={() => setDanmakuOpen(false)}
               />
             </ResizablePanel>
@@ -667,8 +658,9 @@ function HomeLayout() {
 }
 
 function Home() {
-  const { data: conversations, error, isPending } = useQuery(conversationsQuery);
-  const current = preferredConversation(conversations);
+  const { id: workspaceId } = useWorkspace();
+  const { data: conversations, error, isPending } = useConversations();
+  const current = preferredConversation(workspaceId, conversations);
   const create = useCreateConversation();
 
   if (current) {
@@ -694,7 +686,7 @@ function Home() {
         </EmptyTitle>
         {(!isPending || error) && (
           <EmptyDescription>
-            {error?.message ?? '选择直播平台，Herald 会结合弹幕陪你接话、找话题。'}
+            {error?.message ?? '在工作区绑定直播间，即可让 Herald 结合弹幕陪你接话、找话题。'}
           </EmptyDescription>
         )}
       </EmptyHeader>
@@ -712,12 +704,25 @@ function Home() {
 
 function Chat() {
   const { id } = chatRoute.useParams();
+  const { id: workspaceId } = useWorkspace();
+  const query = useConversations();
+  const exists = query.data?.some(item => item.id === id);
 
   useEffect(() => {
-    sessionStorage.setItem(activeChatKey, id);
-  }, [id]);
+    if (exists) {
+      sessionStorage.setItem(activeChatKey(workspaceId), id);
+    }
+  }, [exists, id, workspaceId]);
 
-  return <ChatSession key={id} id={id} />;
+  if (!query.isSuccess) {
+    return (
+      <p role={query.isError ? 'alert' : 'status'} className="text-muted-foreground p-6 text-sm">
+        {query.error?.message ?? '正在读取会话…'}
+      </p>
+    );
+  }
+
+  return exists ? <ChatSession key={id} id={id} /> : <Navigate to="/" replace />;
 }
 
 const skillById = new Map<string, (typeof skills)[number]>(skills.map(item => [item.id, item]));
@@ -981,26 +986,32 @@ function ChatTranscript({
 }
 
 function ChatSession({ id }: { id: string }) {
+  const { id: workspaceId } = useWorkspace();
   const input = useRef<HTMLTextAreaElement>(null);
   const chatBody = useRef<HTMLDivElement>(null);
   const composer = useRef<HTMLDivElement>(null);
   const [replies, setReplies] = useState<LiveReplies>([]);
-  const savingModel = useIsMutating({ mutationKey: chatModelKey(id) }) > 0;
+  const savingModel = useIsMutating({ mutationKey: chatModelKey(workspaceId, id) }) > 0;
   const queryClient = useQueryClient();
-  const historyQuery = { queryKey: ['history', id], queryFn: () => rpc.conversations.history(id) };
+
+  const historyQuery = {
+    queryKey: [...workspaceKey(workspaceId), 'history', id],
+    queryFn: () => rpc.conversations.history({ workspaceId, id }),
+  };
+
   const history = useQuery({ ...historyQuery, refetchOnWindowFocus: false });
-  const conversation = useQuery(conversationsQuery).data?.find(item => item.id === id);
+  const conversation = useConversations().data?.find(item => item.id === id);
   /** 未开播时主播选择先在会话里准备，暂时收起开播遮罩。 */
   const [preparing, setPreparing] = useState(false);
 
   const refresh = useCallback(
     () =>
       Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['history', id] }),
-        queryClient.invalidateQueries({ queryKey: usageKey(id) }),
-        queryClient.invalidateQueries(conversationsQuery),
+        queryClient.invalidateQueries({ queryKey: [...workspaceKey(workspaceId), 'history', id] }),
+        queryClient.invalidateQueries({ queryKey: usageKey(workspaceId, id) }),
+        queryClient.invalidateQueries({ queryKey: conversationsKey(workspaceId) }),
       ]),
-    [id, queryClient],
+    [id, queryClient, workspaceId],
   );
 
   const reminder = useLiveReminder(id, refresh);
@@ -1008,7 +1019,7 @@ function ChatSession({ id }: { id: string }) {
   const send = useMutation({
     async mutationFn(message: ComposerMessage) {
       setReplies([]);
-      const stream = await rpc.conversations.send({ id, ...message });
+      const stream = await rpc.conversations.send({ workspaceId, id, ...message });
 
       for await (const updates of stream) {
         setReplies(updates);
@@ -1020,8 +1031,8 @@ function ChatSession({ id }: { id: string }) {
     async onSettled() {
       await Promise.all([
         queryClient.invalidateQueries(historyQuery),
-        queryClient.invalidateQueries({ queryKey: usageKey(id) }),
-        queryClient.invalidateQueries(conversationsQuery),
+        queryClient.invalidateQueries({ queryKey: usageKey(workspaceId, id) }),
+        queryClient.invalidateQueries({ queryKey: conversationsKey(workspaceId) }),
       ]);
     },
   });
@@ -1102,6 +1113,7 @@ function SettingsPage() {
           <TabsTrigger value="agent">Agent 能力</TabsTrigger>
         </TabsList>
         <TabsContent value="general" className="settings-stack grid gap-6">
+          <WorkspaceRoomSettings />
           <PlatformSettings openLogin={openLogin} />
           <ModelSettings />
         </TabsContent>
@@ -1119,7 +1131,62 @@ function SettingsPage() {
   );
 }
 
-const rootRoute = createRootRoute({ component: Workspace });
+function WorkspaceRoot() {
+  const query = useQuery(workspaceListQuery);
+  const [selected, setSelected] = useState(() => localStorage.getItem(activeWorkspaceKey));
+  const navigate = useNavigate();
+  const pathname = useLocation({ select: location => location.pathname });
+  const active = query.data?.find(item => item.id === selected) ?? query.data?.[0];
+
+  useEffect(() => {
+    if (active) {
+      localStorage.setItem(activeWorkspaceKey, active.id);
+    }
+  }, [active]);
+
+  if (!active || !query.data) {
+    return (
+      <main className="grid h-full place-items-center gap-3">
+        <div className="grid justify-items-center gap-3">
+          <p role={query.error ? 'alert' : 'status'} className="text-muted-foreground text-sm">
+            {query.error?.message ?? '正在读取工作区…'}
+          </p>
+          {query.isError && (
+            <Button
+              variant="outline"
+              onClick={() => {
+                void query.refetch();
+              }}
+            >
+              重试
+            </Button>
+          )}
+        </div>
+      </main>
+    );
+  }
+
+  function select(id: string) {
+    localStorage.setItem(activeWorkspaceKey, id);
+    setSelected(id);
+
+    if (pathname.startsWith('/chat/')) {
+      void navigate({ to: '/', replace: true });
+    }
+  }
+
+  const switcher = (
+    <WorkspaceSwitcher workspace={active} workspaces={query.data} onSelect={select} />
+  );
+
+  return (
+    <WorkspaceContext value={active}>
+      <WorkspaceShell key={active.id} switcher={switcher} />
+    </WorkspaceContext>
+  );
+}
+
+const rootRoute = createRootRoute({ component: WorkspaceRoot });
 
 const homeLayoutRoute = createRoute({
   getParentRoute: () => rootRoute,

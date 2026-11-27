@@ -1,4 +1,3 @@
-import type { LivePlatform } from '@herald/live';
 import { Link } from '@tanstack/react-router';
 import { ArrowDown, X } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
@@ -7,29 +6,31 @@ import { Button } from '@/components/ui/button';
 
 import { platformLabels } from '../shared/platforms.ts';
 import { AssistantReminders } from './assistant-mode.tsx';
-import { roomSummary, StatusDot, useRoom } from './live-status.tsx';
+import { RoomIndicators, useRooms } from './live-status.tsx';
 import { PlatformIcon } from './platform-icon.tsx';
 import { rpc } from './rpc.ts';
+import { useWorkspace } from './workspace-context.ts';
 
 type LiveMessages =
   Awaited<ReturnType<typeof rpc.rooms.watch>> extends AsyncIterable<infer Batch> ? Batch : never;
 
 const keep = 200;
 
-function useDanmaku(platform: LivePlatform) {
-  const [messages, setMessages] = useState<LiveMessages>([]);
+function useDanmaku(bindingKey: string) {
+  const { id: workspaceId } = useWorkspace();
+  const [snapshot, setSnapshot] = useState<{ key: string; messages: LiveMessages }>();
 
   useEffect(() => {
     const controller = new AbortController();
 
     async function watch() {
       try {
-        const stream = await rpc.rooms.watch(platform, { signal: controller.signal });
-        let first = true;
+        const stream = await rpc.rooms.watch({ workspaceId }, { signal: controller.signal });
+        let recent: LiveMessages = [];
 
         for await (const batch of stream) {
-          setMessages(current => (first ? batch : [...current, ...batch]).slice(-keep));
-          first = false;
+          recent = [...recent, ...batch].slice(-keep);
+          setSnapshot({ key: bindingKey, messages: recent });
         }
       } catch (error) {
         if (!controller.signal.aborted) {
@@ -41,23 +42,22 @@ function useDanmaku(platform: LivePlatform) {
     void watch();
 
     return () => controller.abort();
-  }, [platform]);
+  }, [workspaceId, bindingKey]);
 
-  return messages;
+  return snapshot?.key === bindingKey ? snapshot.messages : [];
 }
 
 /** 助手会话里位于聊天与浏览器之间的实时弹幕栏，顶部是最新的提醒。 */
 export function DanmakuPanel({
   conversationId,
-  platform,
   onClose,
 }: {
   conversationId: string;
-  platform: LivePlatform;
   onClose: () => void;
 }) {
-  const messages = useDanmaku(platform);
-  const { data: room } = useRoom(platform);
+  const { data: rooms } = useRooms();
+  const bindingKey = rooms?.map(room => `${room.platform}:${room.roomId}`).join(',') ?? '';
+  const messages = useDanmaku(bindingKey);
   const list = useRef<HTMLOListElement>(null);
   const [following, setFollowing] = useState(true);
 
@@ -72,15 +72,8 @@ export function DanmakuPanel({
   return (
     <aside className="danmaku-panel" aria-label="实时弹幕">
       <header className="flex h-11 shrink-0 items-center gap-2 pr-1.5 pl-3">
-        <PlatformIcon platform={platform} size={16} />
-        <h2 className="text-sm font-medium">实时弹幕</h2>
-        <span
-          className="text-muted-foreground flex min-w-0 items-center gap-1.5 text-[11px]"
-          title={roomSummary(room)}
-        >
-          <StatusDot room={room} />
-          <span className="truncate tabular-nums">{room ? room.roomId : '未绑定'}</span>
-        </span>
+        <h2 className="shrink-0 text-sm font-medium">实时弹幕</h2>
+        <RoomIndicators rooms={rooms} compact />
         <Button
           variant="ghost"
           size="icon-sm"
@@ -95,11 +88,11 @@ export function DanmakuPanel({
       <div className="relative flex min-h-0 flex-1 flex-col">
         {messages.length === 0 ? (
           <p className="text-muted-foreground grid flex-1 place-items-center px-6 py-10 text-center text-xs">
-            {room ? (
+            {rooms?.length ? (
               '暂时还没有弹幕'
             ) : (
               <span>
-                {platformLabels[platform]}还没有绑定直播间，
+                当前工作区还没有绑定直播间，
                 <Link to="/settings" className="text-foreground underline underline-offset-3">
                   去设置
                 </Link>
@@ -119,13 +112,19 @@ export function DanmakuPanel({
             {messages.map(message => (
               <li
                 key={message.evidenceId}
-                className="danmaku-row py-1 text-[13px] leading-snug"
+                className="danmaku-row flex items-start gap-1.5 py-1 text-[13px] leading-snug"
                 title={new Date(message.receivedAt).toLocaleTimeString('zh-CN')}
               >
-                <span className="text-muted-foreground mr-1.5">
-                  {message.authorName ?? message.authorId ?? '观众'}
+                <span className="mt-0.5 shrink-0" title={platformLabels[message.platform]}>
+                  <PlatformIcon platform={message.platform} size={13} />
+                  <span className="sr-only">{platformLabels[message.platform]}</span>
                 </span>
-                <span className="break-words">{message.text}</span>
+                <div className="min-w-0">
+                  <span className="text-muted-foreground mr-1.5">
+                    {message.authorName ?? message.authorId ?? '观众'}
+                  </span>
+                  <span className="break-words">{message.text}</span>
+                </div>
               </li>
             ))}
           </ol>
