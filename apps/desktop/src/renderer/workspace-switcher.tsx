@@ -63,9 +63,9 @@ export function WorkspaceSwitcher({ workspace, workspaces, onSelect }: Workspace
             <DropdownMenuTrigger asChild>
               <Button
                 ref={trigger}
-                variant="outline"
+                variant="ghost"
                 size="icon-lg"
-                className="workspace-switcher rounded-xl"
+                className="workspace-switcher rail-link"
                 aria-label={`工作区：${workspace.name}`}
               >
                 <WorkspaceIcon

@@ -29,8 +29,8 @@ import {
   CircleCheck,
   CircleX,
   LoaderCircle,
-  MessageSquareText,
   PanelLeft,
+  PanelRight,
   Plus,
   Terminal,
   X,
@@ -194,13 +194,20 @@ function WorkspaceShell({ switcher }: { switcher: React.ReactNode }) {
     openLogin: (platform, trigger) => setLogin({ platform, trigger, open: true }),
   };
 
+  const isLive = tab === '/live';
+  let togglePanel = hasList ? () => setListOpen(!listOpen) : undefined;
+
+  if (isLive) {
+    togglePanel = () => setDanmakuOpen(!danmakuOpen);
+  }
+
   return (
     <shellContext.Provider value={shell}>
       <div className="desktop">
         <Topbar
           tab={tab}
-          listOpen={listOpen}
-          onToggleList={hasList ? () => setListOpen(!listOpen) : undefined}
+          panelOpen={isLive ? danmakuOpen : hasList && listOpen}
+          onTogglePanel={togglePanel}
         />
         <div className="desktop-body">
           <NavigationRail switcher={switcher} current={tab} />
@@ -302,51 +309,36 @@ const pageTitles: Record<DesktopTab, string> = {
 
 function Topbar({
   tab,
-  listOpen,
-  onToggleList,
+  panelOpen,
+  onTogglePanel,
 }: {
   tab: DesktopTab;
-  listOpen: boolean;
-  onToggleList?: () => void;
+  panelOpen: boolean;
+  onTogglePanel?: () => void;
 }) {
+  const live = tab === '/live';
+  const panel = live ? '实时弹幕' : '第二栏';
+  const action = panelOpen ? '收起' : '展开';
+
   return (
     <header className="topbar drag">
       <div className="window-rail-control">
-        {onToggleList && (
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            className="text-muted-foreground rounded-lg"
-            aria-label={listOpen ? '收起第二栏' : '展开第二栏'}
-            aria-controls="workspace-list"
-            aria-expanded={listOpen}
-            onClick={onToggleList}
-          >
-            <PanelLeft />
-          </Button>
-        )}
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          className="text-muted-foreground rounded-lg"
+          aria-label={`${action}${panel}`}
+          aria-controls={live ? 'live-danmaku' : 'workspace-list'}
+          aria-expanded={panelOpen}
+          disabled={!onTogglePanel}
+          onClick={onTogglePanel}
+        >
+          {live ? <PanelRight /> : <PanelLeft />}
+        </Button>
       </div>
       <WindowNav />
       <ConversationTitle tab={tab} />
-      {tab === '/live' && <LivePanelToggle />}
     </header>
-  );
-}
-
-function LivePanelToggle() {
-  const { danmakuOpen, setDanmakuOpen } = useContext(shellContext);
-
-  return (
-    <Button
-      variant="ghost"
-      size="icon-sm"
-      className="text-muted-foreground hover:text-foreground aria-pressed:text-foreground ml-auto rounded-lg"
-      aria-pressed={danmakuOpen}
-      aria-label={danmakuOpen ? '隐藏实时弹幕' : '显示实时弹幕'}
-      onClick={() => setDanmakuOpen(!danmakuOpen)}
-    >
-      <MessageSquareText />
-    </Button>
   );
 }
 

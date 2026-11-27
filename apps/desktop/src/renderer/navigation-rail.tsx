@@ -4,6 +4,7 @@ import Messages from 'kubai-icons-react/icons/messages';
 import Notebook from 'kubai-icons-react/icons/notebook';
 import RadioTower from 'kubai-icons-react/icons/radio-tower';
 import Sliders from 'kubai-icons-react/icons/sliders';
+import { useLayoutEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
 
 import { Separator } from '@/components/ui/separator';
@@ -62,9 +63,33 @@ export function NavigationRail({
   switcher: ReactNode;
   current: DesktopTab;
 }) {
+  const rail = useRef<HTMLElement>(null);
+  const indicator = useRef<HTMLSpanElement>(null);
+
+  useLayoutEffect(() => {
+    const nav = rail.current;
+    const highlight = indicator.current;
+    const selected = nav?.querySelector<HTMLElement>('[aria-current="page"]');
+
+    if (!nav || !highlight || !selected) {
+      return;
+    }
+
+    const position = () => {
+      highlight.style.translate = `0 ${selected.offsetTop}px`;
+    };
+
+    const observer = new ResizeObserver(position);
+    observer.observe(nav);
+    position();
+
+    return () => observer.disconnect();
+  }, [current]);
+
   return (
     <TooltipProvider delayDuration={300}>
-      <nav className="navigation-rail" aria-label="主导航">
+      <nav ref={rail} className="navigation-rail" aria-label="主导航">
+        <span ref={indicator} className="rail-indicator" aria-hidden="true" />
         <div className="rail-workspace">{switcher}</div>
         <Separator className="rail-separator" />
         {tabs.map(({ path, label, icon: Icon, color }) => (

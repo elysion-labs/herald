@@ -70,7 +70,7 @@ export function DanmakuPanel({
   }, [messages, following]);
 
   return (
-    <aside className="danmaku-panel" aria-label="实时弹幕">
+    <aside id="live-danmaku" className="danmaku-panel" aria-label="实时弹幕">
       <header className="danmaku-header">
         <div className="grid min-w-0 gap-1">
           <h2 className="text-sm font-medium">实时弹幕</h2>
