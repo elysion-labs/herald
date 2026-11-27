@@ -7,9 +7,13 @@
   "dependencies": {
     "@earendil-works/pi-ai": "catalog:",
     "@earendil-works/pi-coding-agent": "1.6.0",
+    "@herald/danmaku": "workspace:*",
     "@herald/history-tool": "workspace:*",
     "@herald/live": "workspace:*",
+    "@herald/live-assistant": "workspace:*",
+    "@herald/memory-tool": "workspace:*",
     "@herald/skill-tool": "workspace:*",
+    "@orpc/server": "1.16.5",
     "typebox": "catalog:"
   }
 }

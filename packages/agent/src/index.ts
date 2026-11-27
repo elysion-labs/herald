@@ -270,3 +270,9 @@ export async function createLiveAgent({
     expandSkills: (text: string) => expandSkillCommands(text, resourceLoader.getSkills().skills),
   };
 }
+
+export { canRename, createConversationRuntime } from './conversation-runtime.ts';
+
+export type { AgentTools } from './conversation-runtime.ts';
+
+export { readConversationHistory } from './conversation-messages.ts';

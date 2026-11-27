@@ -1,11 +1,13 @@
-import { defineTool, Type } from '@herald/agent';
+import { defineTool } from '@earendil-works/pi-coding-agent';
 import { adapters, supports } from '@herald/live';
 import type { LivePlatform } from '@herald/live';
-
-import { platforms } from '../shared/platforms.ts';
+import { Type } from 'typebox';
 
 /** 只在会话范围内有平台支持观众主页时注册工具。 */
-export function createViewerProfileTools(platform: LivePlatform | null) {
+export function createViewerProfileTools(
+  platform: LivePlatform | null,
+  platforms: readonly LivePlatform[],
+) {
   const eligible = (platform ? [platform] : platforms).filter(item =>
     supports([item], 'viewerProfile'),
   );
