@@ -25,6 +25,7 @@ import HomeIcon from 'kubai-icons-react/icons/home';
 import Lightbulb from 'kubai-icons-react/icons/lightbulb';
 import Messages from 'kubai-icons-react/icons/messages';
 import MemoryIcon from 'kubai-icons-react/icons/notebook';
+import BroadcastIcon from 'kubai-icons-react/icons/radio-tower';
 import SettingsIcon from 'kubai-icons-react/icons/sliders';
 import SkillsIcon from 'kubai-icons-react/icons/sparkles';
 import Tv from 'kubai-icons-react/icons/tv';
@@ -65,7 +66,6 @@ import {
   MessageScrollerViewport,
 } from '@/components/ui/message-scroller';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Trace,
   TraceCollapsible,
@@ -77,10 +77,8 @@ import {
 } from '@/components/ui/trace';
 
 import { attachmentPattern } from '../shared/attachments.ts';
-import { AgentCapabilitySettings, SystemPromptSettings } from './agent-settings.tsx';
 import { LiveControl, StartLiveOverlay } from './assistant-mode.tsx';
 import type { Conversation } from './assistant-mode.tsx';
-import { AssistantSettingsPanel } from './assistant-settings.tsx';
 import { BrowserPane } from './browser-pane.tsx';
 import { AttachmentChip, ChatComposer } from './chat-composer.tsx';
 import type { ComposerMessage } from './chat-composer.tsx';
@@ -89,15 +87,10 @@ import { chatModelKey } from './chat-model-controls.tsx';
 import { usageKey } from './context-usage.tsx';
 import { DanmakuPanel } from './danmaku-panel.tsx';
 import { kubaiMixed } from './kubai-colors.ts';
-import { PlatformIcons, RoomIndicators, roomSummary, useRooms } from './live-status.tsx';
+import { LiveDuration, PlatformIcons, roomSummary, StatusDot, useRooms } from './live-status.tsx';
 import { MemoryPage } from './memory-page.tsx';
-import { ModelSettings } from './model-settings.tsx';
 import { PlatformLoginDialog } from './platform-login-dialog.tsx';
-import {
-  platformAccountKey,
-  PlatformSettings,
-  WorkspaceRoomSettings,
-} from './platform-settings.tsx';
+import { platformAccountKey } from './platform-settings.tsx';
 import {
   ReminderFailureCard,
   ReminderItem,
@@ -106,6 +99,7 @@ import {
 } from './reminders.tsx';
 import type { LiveReminder } from './reminders.tsx';
 import { rpc } from './rpc.ts';
+import { SettingsPage, settingsSearch } from './settings-page.tsx';
 import {
   conversationsKey,
   useConversations,
@@ -273,7 +267,7 @@ function Sidebar({ switcher }: { switcher: React.ReactNode }) {
             label="工作台"
             icon={HomeIcon}
             color={kubaiMixed.home}
-            current={homeActive}
+            current={homeActive && current?.mode !== 'assistant'}
           />
           <NavItem
             to="/memory"
@@ -298,40 +292,55 @@ function Sidebar({ switcher }: { switcher: React.ReactNode }) {
             />
           </div>
         )}
-        <div className="nav-section">
-          <h2>会话</h2>
-          <NewConversationButton />
-        </div>
-        <div className="session-list grid content-start gap-px">
-          {conversations
-            ?.filter(item => item.mode === 'chat')
-            .map(item => {
-              const selected = homeActive && item.id === current?.id;
-
-              return (
-                <Link
-                  className="nav-item session-link"
-                  aria-label={item.title}
-                  data-current={selected}
-                  aria-current={selected ? 'page' : undefined}
-                  key={item.id}
-                  to="/chat/$id"
-                  params={{ id: item.id }}
-                >
-                  <PlatformIcons platforms={item.livePlatforms} />
-                  <span className="min-w-0 flex-1 truncate">{item.title}</span>
-                  <time className="session-time" dateTime={new Date(item.createdAt).toISOString()}>
-                    {shortTime(item.createdAt)}
-                  </time>
-                </Link>
-              );
-            })}
-          {conversations?.every(item => item.mode !== 'chat') && (
-            <p className="text-muted-foreground px-2 py-1 text-xs">还没有会话</p>
-          )}
-        </div>
+        <SidebarSessionList
+          conversations={conversations}
+          selectedId={homeActive ? current?.id : undefined}
+        />
       </div>
     </aside>
+  );
+}
+
+function SidebarSessionList({
+  conversations,
+  selectedId,
+}: {
+  conversations?: Conversations;
+  selectedId?: string;
+}) {
+  const chats = conversations?.filter(item => item.mode === 'chat');
+
+  return (
+    <>
+      <div className="nav-section">
+        <h2>会话</h2>
+        {chats?.length !== 0 && <NewConversationButton />}
+      </div>
+      <div className="session-list grid content-start gap-px">
+        {chats?.map(item => {
+          const selected = item.id === selectedId;
+
+          return (
+            <Link
+              className="nav-item session-link"
+              aria-label={item.title}
+              data-current={selected}
+              aria-current={selected ? 'page' : undefined}
+              key={item.id}
+              to="/chat/$id"
+              params={{ id: item.id }}
+            >
+              <PlatformIcons platforms={item.livePlatforms} />
+              <span className="min-w-0 flex-1 truncate">{item.title}</span>
+              <time className="session-time" dateTime={new Date(item.createdAt).toISOString()}>
+                {shortTime(item.createdAt)}
+              </time>
+            </Link>
+          );
+        })}
+        {chats?.length === 0 && <SidebarEmpty />}
+      </div>
+    </>
   );
 }
 
@@ -342,6 +351,22 @@ function shortTime(timestamp: number) {
   return today
     ? date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
     : date.toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' });
+}
+
+function SidebarEmpty() {
+  return (
+    <Empty className="items-start gap-1 rounded-none p-2 text-left">
+      <EmptyHeader className="flex-row gap-2">
+        <EmptyMedia className="mb-0">
+          <Messages size={16} color={kubaiMixed.empty} aria-hidden="true" />
+        </EmptyMedia>
+        <EmptyDescription className="text-xs">还没有会话</EmptyDescription>
+      </EmptyHeader>
+      <EmptyContent className="items-start">
+        <NewConversationButton labelled />
+      </EmptyContent>
+    </Empty>
+  );
 }
 
 function NavItem({
@@ -370,24 +395,24 @@ function NavItem({
   );
 }
 
-function NewConversationButton() {
+function NewConversationButton({ labelled = false }: { labelled?: boolean }) {
   const create = useCreateConversation();
 
   return (
     <>
       <Button
-        variant="ghost"
-        size="icon-xs"
-        className="text-muted-foreground hover:text-foreground -mr-1"
+        variant={labelled ? 'link' : 'ghost'}
+        size={labelled ? 'xs' : 'icon-xs'}
+        className={labelled ? 'rounded-sm !px-0' : 'text-muted-foreground -mr-1 rounded-md'}
         aria-label="新建会话"
-        title="新建会话"
         disabled={create.isPending}
         onClick={() => create.mutate()}
       >
-        <Plus />
+        <Plus data-icon="inline-start" />
+        {labelled && '新建会话'}
       </Button>
       {create.isError && (
-        <p role="alert" className="error absolute top-full right-0 left-0">
+        <p role="alert" className="error">
           {create.error.message}
         </p>
       )}
@@ -395,7 +420,6 @@ function NewConversationButton() {
   );
 }
 
-/** 工作区的助手会话，附带已绑定的房间状态。 */
 function AssistantItem({
   conversation,
   current,
@@ -405,25 +429,29 @@ function AssistantItem({
 }) {
   const { data: rooms } = useRooms();
   const selected = conversation.id === current;
-  const live = conversation.liveStartedAt ? '直播中 · ' : '';
-  const detail = rooms?.length ? `${live}${rooms.length} 个直播间` : '未绑定直播间';
-  const status = rooms?.map(roomSummary).join('；');
+  const startedAt = conversation.liveStartedAt;
+  const roomStatus = rooms?.map(roomSummary).join('；');
+  const connected = rooms?.find(room => room.state === 'connected') ?? rooms?.[0];
 
   return (
     <Link
       to="/chat/$id"
       params={{ id: conversation.id }}
-      className="live-room"
+      className="nav-item assistant-nav-item"
       data-current={selected}
       aria-current={selected ? 'page' : undefined}
-      aria-label={`直播助手，${detail}`}
-      title={status}
     >
-      <span className="grid min-w-0 flex-1 leading-tight">
-        <span className="truncate text-[13px]">直播助手</span>
-        <span className="text-muted-foreground truncate text-[11px] tabular-nums">{detail}</span>
-      </span>
-      <RoomIndicators rooms={rooms} compact />
+      <BroadcastIcon size={17} color={kubaiMixed.broadcast} trigger="parent" aria-hidden="true" />
+      <span className="flex-1 truncate">直播助手</span>
+      {startedAt && (
+        <span className="text-muted-foreground text-xs">
+          <LiveDuration startedAt={startedAt} />
+        </span>
+      )}
+      <PlatformIcons platforms={conversation.livePlatforms} size={13} />
+      {connected && <StatusDot room={connected} />}
+      {rooms?.length === 0 && <span className="text-muted-foreground text-xs">未绑定</span>}
+      {roomStatus && <span className="sr-only">{roomStatus}</span>}
     </Link>
   );
 }
@@ -988,6 +1016,15 @@ function ChatTranscript({
   );
 }
 
+function useStartLiveOverlay(conversation?: Conversation) {
+  const [preparing, setPreparing] = useState(false);
+
+  const visible =
+    conversation?.mode === 'assistant' && conversation.liveStartedAt === null && !preparing;
+
+  return { visible, dismiss: () => setPreparing(true) };
+}
+
 function ChatSession({ id }: { id: string }) {
   const { id: workspaceId } = useWorkspace();
   const input = useRef<HTMLTextAreaElement>(null);
@@ -1004,8 +1041,7 @@ function ChatSession({ id }: { id: string }) {
 
   const history = useQuery({ ...historyQuery, refetchOnWindowFocus: false });
   const conversation = useConversations().data?.find(item => item.id === id);
-  /** 未开播时主播选择先在会话里准备，暂时收起开播遮罩。 */
-  const [preparing, setPreparing] = useState(false);
+  const startOverlay = useStartLiveOverlay(conversation);
 
   const reminder = useLiveReminder(id);
 
@@ -1062,18 +1098,21 @@ function ChatSession({ id }: { id: string }) {
           replies={replies}
           reminder={reminder}
         />
-        <StartLiveOverlay
-          conversation={conversation}
-          hidden={preparing}
-          onDismiss={() => setPreparing(true)}
-        />
-        {history.data?.length === 0 && !send.isPending && (
-          <div className="chat-empty">
-            <p className="text-foreground/80 text-sm">还没有消息</p>
-            <p className="text-muted-foreground text-xs">直接提问，也可以添加图片或文本文件</p>
-          </div>
+        {startOverlay.visible && <StartLiveOverlay onDismiss={startOverlay.dismiss} />}
+        {!startOverlay.visible && history.data?.length === 0 && !send.isPending && !reminder && (
+          <Empty className="chat-empty p-4">
+            <EmptyHeader className="gap-1">
+              <EmptyMedia className="mb-1">
+                <Messages size={28} color={kubaiMixed.empty} aria-hidden="true" />
+              </EmptyMedia>
+              <EmptyTitle className="text-sm">还没有消息</EmptyTitle>
+              <EmptyDescription className="text-xs">
+                发一条消息，或添加图片和文本文件。
+              </EmptyDescription>
+            </EmptyHeader>
+          </Empty>
         )}
-        <div ref={composer} className="chat-composer">
+        <div ref={composer} className="chat-composer" inert={startOverlay.visible}>
           {send.isError && (
             <p role="alert" className="error pointer-events-auto mx-auto max-w-3xl px-6">
               {send.error.message}
@@ -1093,35 +1132,11 @@ function ChatSession({ id }: { id: string }) {
   );
 }
 
-function SettingsPage() {
+function SettingsRoutePage() {
   const { openLogin } = useContext(shellContext);
+  const { section } = settingsRoute.useSearch();
 
-  return (
-    <main className="page surface-enter">
-      <Tabs defaultValue="general" className="mx-auto max-w-3xl gap-5">
-        <TabsList>
-          <TabsTrigger value="general">直播与模型</TabsTrigger>
-          <TabsTrigger value="assistant">直播助手</TabsTrigger>
-          <TabsTrigger value="prompt">系统提示词</TabsTrigger>
-          <TabsTrigger value="agent">Agent 能力</TabsTrigger>
-        </TabsList>
-        <TabsContent value="general" className="settings-stack grid gap-6">
-          <WorkspaceRoomSettings />
-          <PlatformSettings openLogin={openLogin} />
-          <ModelSettings />
-        </TabsContent>
-        <TabsContent value="assistant" className="settings-stack grid gap-6">
-          <AssistantSettingsPanel />
-        </TabsContent>
-        <TabsContent value="prompt" className="settings-stack grid gap-6">
-          <SystemPromptSettings />
-        </TabsContent>
-        <TabsContent value="agent" className="settings-stack grid gap-6">
-          <AgentCapabilitySettings />
-        </TabsContent>
-      </Tabs>
-    </main>
-  );
+  return <SettingsPage section={section} openLogin={openLogin} />;
 }
 
 function WorkspaceRoot() {
@@ -1204,7 +1219,8 @@ const chatRoute = createRoute({
 const settingsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/settings',
-  component: SettingsPage,
+  validateSearch: settingsSearch,
+  component: SettingsRoutePage,
 });
 
 const memoryRoute = createRoute({
@@ -1233,6 +1249,11 @@ const root = document.getElementById('root');
 if (!root) {
   throw new Error('Missing application root');
 }
+
+const darkScheme = window.matchMedia('(prefers-color-scheme: dark)');
+const applyTheme = () => document.documentElement.classList.toggle('dark', darkScheme.matches);
+applyTheme();
+darkScheme.addEventListener('change', applyTheme);
 
 createRoot(root).render(
   <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>

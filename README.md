@@ -112,16 +112,16 @@ vp run dev
 
 ## Agent 能力
 
-Herald 使用 [Pi](https://github.com/earendil-works/pi) 运行会话。在「设置 › 系统提示词」可以查看只读的内置提示词，再填写自己的扩展。运行时依次使用内置提示词、用户扩展、Pi 的附加提示词和直播间上下文。
+在「设置 › 系统提示词」可以查看只读的内置提示词，再填写自己的扩展。运行时依次使用内置提示词、用户扩展、资源目录中的附加提示词和直播间上下文。
 
 在「设置 › Agent 能力」可打开共享的 `agent/` 目录。以下资源在下一轮运行时加载：
 
 - `skills/` — 和 Herald 自带的 skills 一起使用。
-- `extensions/` — Pi 扩展。
+- `extensions/` — Agent 扩展。
 - `mcp.json` — MCP 服务器配置。
-- `settings.json`、`APPEND_SYSTEM.md` — Pi 设置和附加系统提示词。
+- `settings.json`、`APPEND_SYSTEM.md` — Agent 设置和附加系统提示词。
 
-Herald 使用自己的资源目录，与命令行 Pi 的 `~/.pi/agent` 和 `~/.agents/skills` 分开。Pi 内置的文件写入、文件编辑和命令执行工具默认关闭，可在「Agent 能力」中分别开启。
+内置的文件写入、文件编辑和命令执行工具默认关闭，可在「设置 › Agent 能力」中分别开启。
 
 <a id="data"></a>
 
@@ -132,11 +132,11 @@ Herald 使用自己的资源目录，与命令行 Pi 的 `~/.pi/agent` 和 `~/.a
 | 路径                                                                 | 内容                                     |
 | -------------------------------------------------------------------- | ---------------------------------------- |
 | `herald.sqlite`                                                      | 工作区、直播间绑定、会话索引、弹幕和设置 |
-| `workspaces/<id>/sessions/`                                          | 当前工作区的 Pi JSONL 会话               |
+| `workspaces/<id>/sessions/`                                          | 当前工作区的 JSONL 会话                  |
 | `workspaces/<id>/memory/shared/`                                     | 当前工作区的通用记忆 Markdown            |
 | `workspaces/<id>/memory/bilibili/`、`workspaces/<id>/memory/douyin/` | 按平台保存的观众记忆 Markdown            |
-| `agent/`                                                             | 共享的 Pi 资源                           |
-| `auth.json`、`models.json`                                           | 共享的 Pi 凭证和模型文件                 |
+| `agent/`                                                             | 共享的 Agent 资源                        |
+| `auth.json`、`models.json`                                           | 共享的凭证和模型文件                     |
 
 加载工作区时会清理其中超过 30 天的弹幕。应用设置中保存的 API Key 通过 Electron `safeStorage` 加密后写入 SQLite。平台登录和内置浏览器共用持久化的 Electron 会话。
 

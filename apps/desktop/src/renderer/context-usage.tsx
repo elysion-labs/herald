@@ -76,7 +76,7 @@ function WindowUsage({ usage }: { usage: Usage }) {
           style={{ width: `${Math.min(percent, 100)}%` }}
         />
       </div>
-      <p className="text-muted-foreground">接近上限时 pi 会自动压缩较早的对话</p>
+      <p className="text-muted-foreground">接近上限时会自动压缩较早的对话</p>
     </div>
   );
 }

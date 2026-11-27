@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { ChevronsUpDown, FolderOpen, Pencil, Plus, Trash2 } from 'lucide-react';
+import WorkspaceIcon from 'kubai-icons-react/icons/folder-open';
+import { ChevronsUpDown, Pencil, Plus, Trash2 } from 'lucide-react';
 import { useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 
@@ -27,6 +28,7 @@ import { Field, FieldError, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 
 import { dialogOrigin } from './dialog-origin.ts';
+import { kubaiMixed } from './kubai-colors.ts';
 import { rpc } from './rpc.ts';
 import { workspaceKey, workspaceListQuery } from './workspace-context.ts';
 import type { Workspace } from './workspace-context.ts';
@@ -60,10 +62,15 @@ export function WorkspaceSwitcher({ workspace, workspaces, onSelect }: Workspace
             ref={trigger}
             variant="outline"
             size="sm"
-            className="w-full justify-start"
+            className="w-full justify-start gap-2 rounded-lg"
             aria-label={`工作区：${workspace.name}`}
           >
-            <FolderOpen data-icon="inline-start" />
+            <WorkspaceIcon
+              size={17}
+              color={kubaiMixed.folder}
+              trigger="parent"
+              aria-hidden="true"
+            />
             <span className="min-w-0 flex-1 truncate text-left">{workspace.name}</span>
             <ChevronsUpDown data-icon="inline-end" />
           </Button>

@@ -153,6 +153,7 @@ function ModelPicker({
         >
           <Link
             to="/settings"
+            search={{ section: 'models' }}
             aria-label="管理模型供应商"
             title="管理模型供应商"
             onClick={onManage}

@@ -145,6 +145,7 @@ export function ReminderFailureCard({
           {failure.errorCode === 'PRECONDITION_FAILED' && (
             <Link
               to="/settings"
+              search={{ section: 'models' }}
               className="text-foreground shrink-0 text-xs leading-6 underline underline-offset-3"
             >
               去设置

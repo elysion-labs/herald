@@ -1,13 +1,15 @@
-import { describeTrigger, liveTime, reminderPlatform } from '@herald/live-assistant/settings';
+import { describeTrigger, reminderPlatform } from '@herald/live-assistant/settings';
 import type { ReminderTrigger } from '@herald/live-assistant/settings';
 import { useIsMutating, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
-import { Radio, Square, ThumbsDown, ThumbsUp } from 'lucide-react';
+import BroadcastIcon from 'kubai-icons-react/icons/radio-tower';
+import { ThumbsDown, ThumbsUp } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 
-import { RoomIndicators, useRooms } from './live-status.tsx';
+import { kubaiMixed } from './kubai-colors.ts';
+import { LiveDuration, RoomIndicators, useRooms } from './live-status.tsx';
 import { PlatformIcon } from './platform-icon.tsx';
 import { rpc } from './rpc.ts';
 import { conversationsKey, useWorkspace, workspaceKey } from './workspace-context.ts';
@@ -184,28 +186,24 @@ function useLiveAction(action: 'start' | 'end') {
 /** 一次开播或下播操作覆盖本工作区的所有直播间。 */
 export function LiveControl({ conversation }: { conversation: Conversation }) {
   const { data: rooms } = useRooms();
-  const active = conversation.liveStartedAt !== null;
+  const startedAt = conversation.liveStartedAt;
+  const active = startedAt !== null;
   const { mutation, busy } = useLiveAction(active ? 'end' : 'start');
   const label = active ? '下播' : '开播';
-  const Icon = active ? Square : Radio;
 
   return (
-    <div className="relative flex shrink-0 items-center gap-2">
-      <RoomIndicators rooms={rooms} compact />
-      {conversation.liveStartedAt && (
-        <span className="text-muted-foreground hidden text-xs tabular-nums min-[1200px]:inline">
-          {liveTime(conversation.liveStartedAt)} 开播
-        </span>
-      )}
+    <div className="live-control">
       <Button
         size="sm"
-        variant={active ? 'ghost' : 'secondary'}
+        variant="ghost"
+        className="text-muted-foreground gap-2 rounded-md px-2 text-xs"
         disabled={busy || (!active && !rooms?.length)}
-        title={label}
+        aria-label={label}
         onClick={() => mutation.mutate()}
       >
-        <Icon data-icon="inline-start" />
-        {busy && active ? '正在下播…' : label}
+        <span className="status-dot" data-tone={active ? 'live' : undefined} aria-hidden="true" />
+        {startedAt && <LiveDuration startedAt={startedAt} />}
+        <span>{label}</span>
       </Button>
       {mutation.error && (
         <p
@@ -220,23 +218,7 @@ export function LiveControl({ conversation }: { conversation: Conversation }) {
 }
 
 /** 未开播的助手会话可以直接开播，或收起遮罩后先准备。 */
-export function StartLiveOverlay({
-  conversation,
-  hidden,
-  onDismiss,
-}: {
-  conversation?: Conversation;
-  hidden: boolean;
-  onDismiss: () => void;
-}) {
-  if (conversation?.mode !== 'assistant' || conversation.liveStartedAt || hidden) {
-    return null;
-  }
-
-  return <StartLivePanel onDismiss={onDismiss} />;
-}
-
-function StartLivePanel({ onDismiss }: { onDismiss: () => void }) {
+export function StartLiveOverlay({ onDismiss }: { onDismiss: () => void }) {
   const { name } = useWorkspace();
   const { data: rooms, error, isPending } = useRooms();
   const { mutation, busy } = useLiveAction('start');
@@ -244,9 +226,9 @@ function StartLivePanel({ onDismiss }: { onDismiss: () => void }) {
 
   return (
     <div className="start-live-overlay">
-      <div className="grid max-w-sm justify-items-center gap-3 text-center">
-        <Radio className="text-muted-foreground size-7" />
-        <h2 className="text-lg font-medium">{name}</h2>
+      <div className="start-live-content">
+        <BroadcastIcon size={32} color={kubaiMixed.broadcast} aria-hidden="true" />
+        <h2 className="max-w-full truncate text-xl font-medium tracking-tight">{name}</h2>
         {bound ? (
           <RoomIndicators rooms={rooms} />
         ) : (
@@ -256,16 +238,16 @@ function StartLivePanel({ onDismiss }: { onDismiss: () => void }) {
         )}
         <Button
           size="lg"
-          className="mt-2 min-w-36"
+          className="mt-3 min-w-28 rounded-lg"
           disabled={!bound || busy}
           onClick={() => mutation.mutate()}
         >
-          <Radio data-icon="inline-start" />
           {busy ? '正在开播…' : '开播'}
         </Button>
         {!bound && !isPending && !error && (
           <Link
             to="/settings"
+            search={{ section: 'rooms' }}
             className="text-foreground text-xs underline-offset-3 hover:underline"
           >
             去设置绑定直播间
@@ -276,7 +258,7 @@ function StartLivePanel({ onDismiss }: { onDismiss: () => void }) {
             {mutation.error.message}
           </p>
         )}
-        <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={onDismiss}>
+        <Button variant="link" size="sm" className="text-muted-foreground" onClick={onDismiss}>
           先在这里准备
         </Button>
       </div>

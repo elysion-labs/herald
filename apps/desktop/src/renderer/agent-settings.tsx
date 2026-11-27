@@ -72,23 +72,19 @@ function SystemPromptForm({ state }: { state: AgentState }) {
         }
       }}
     >
-      <Collapsible className="rounded-md border px-3 py-2">
-        <CollapsibleTrigger asChild>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="group/trigger text-muted-foreground"
-          >
-            <ChevronRight
-              data-icon="inline-start"
-              className="group-data-[state=open]/trigger:rotate-90"
-            />
-            内置提示词（只读）
-          </Button>
+      <Collapsible>
+        <CollapsibleTrigger className="disclosure-trigger group/trigger">
+          <ChevronRight aria-hidden="true" />
+          <span>内置提示词</span>
+          <span className="text-muted-foreground text-xs">只读</span>
         </CollapsibleTrigger>
-        <CollapsibleContent className="text-muted-foreground px-2 pt-2 pb-1 text-sm leading-relaxed whitespace-pre-wrap">
-          {state.defaultSystemPrompt}
+        <CollapsibleContent className="disclosure-content">
+          <Textarea
+            readOnly
+            aria-label="内置提示词（只读）"
+            className="text-muted-foreground mt-2 max-h-64 min-h-32 overflow-auto leading-relaxed"
+            value={state.defaultSystemPrompt}
+          />
         </CollapsibleContent>
       </Collapsible>
       <Field>
@@ -177,10 +173,10 @@ export function AgentCapabilitySettings() {
       </Card>
       <Card>
         <CardHeader>
-          <CardTitle>pi 资源目录</CardTitle>
+          <CardTitle>Agent 资源目录</CardTitle>
           <CardDescription>
-            结构与 ~/.pi/agent 相同，放入后在下一条消息生效：skills/、extensions/、mcp.json、
-            settings.json、APPEND_SYSTEM.md。
+            可添加技能（skills/）、扩展（extensions/）、MCP 配置（mcp.json）、运行设置
+            （settings.json）和附加提示词（APPEND_SYSTEM.md）。变更在下一条消息生效。
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-wrap items-center gap-2">
@@ -198,7 +194,7 @@ export function AgentCapabilitySettings() {
 }
 
 const toolHints: Record<(typeof builtinTools)[number], string> = {
-  write: '允许 agent 新建或覆盖文件（pi write）',
-  edit: '允许 agent 修改已有文件（pi edit）',
-  exec: '允许 agent 执行 shell 命令（pi bash / powershell）',
+  write: '允许 Agent 新建或覆盖文件',
+  edit: '允许 Agent 修改已有文件',
+  exec: '允许 Agent 执行终端命令',
 };
