@@ -87,7 +87,7 @@ import {
 import { attachmentPattern } from '../shared/attachments.ts';
 import { platformLabels, platforms } from '../shared/platforms.ts';
 import { AgentCapabilitySettings, SystemPromptSettings } from './agent-settings.tsx';
-import { LiveControl } from './assistant-mode.tsx';
+import { LiveControl, StartLiveOverlay } from './assistant-mode.tsx';
 import type { Conversation } from './assistant-mode.tsx';
 import { AssistantSettingsPanel } from './assistant-settings.tsx';
 import { BrowserPane } from './browser-pane.tsx';
@@ -990,6 +990,8 @@ function ChatSession({ id }: { id: string }) {
   const historyQuery = { queryKey: ['history', id], queryFn: () => rpc.conversations.history(id) };
   const history = useQuery({ ...historyQuery, refetchOnWindowFocus: false });
   const conversation = useQuery(conversationsQuery).data?.find(item => item.id === id);
+  /** 未开播时主播选择先在会话里准备，暂时收起开播遮罩。 */
+  const [preparing, setPreparing] = useState(false);
 
   const refresh = useCallback(
     () =>
@@ -1055,6 +1057,11 @@ function ChatSession({ id }: { id: string }) {
           pending={send.isPending ? send.variables : undefined}
           replies={replies}
           reminder={reminder}
+        />
+        <StartLiveOverlay
+          conversation={conversation}
+          hidden={preparing}
+          onDismiss={() => setPreparing(true)}
         />
         {history.data?.length === 0 && !send.isPending && (
           <div className="chat-empty">

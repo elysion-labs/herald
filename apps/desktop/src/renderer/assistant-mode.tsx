@@ -1,11 +1,15 @@
 import { describeTrigger, liveTime } from '@herald/live-assistant/settings';
 import type { ReminderTrigger } from '@herald/live-assistant/settings';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { Link } from '@tanstack/react-router';
 import { Radio, Square, ThumbsDown, ThumbsUp } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 
+import { platformLabels } from '../shared/platforms.ts';
+import { statusLabels, useRoom } from './live-status.tsx';
+import { PlatformIcon } from './platform-icon.tsx';
 import { rpc } from './rpc.ts';
 
 export type Conversation = Awaited<ReturnType<typeof rpc.conversations.list>>[number];
@@ -205,5 +209,85 @@ export function LiveControl({ conversation }: { conversation: Conversation }) {
         下播
       </Button>
     </span>
+  );
+}
+
+/** 未开播的助手会话上覆盖的遮罩：一键开播，也可以先留在会话里准备。 */
+export function StartLiveOverlay({
+  conversation,
+  hidden,
+  onDismiss,
+}: {
+  conversation?: Conversation;
+  /** 主播选择先在会话里准备时收起。 */
+  hidden: boolean;
+  onDismiss: () => void;
+}) {
+  const platform = conversation?.mode === 'assistant' ? conversation.platform : null;
+
+  if (!platform || conversation?.liveStartedAt || hidden) {
+    return null;
+  }
+
+  return <StartLivePanel platform={platform} onDismiss={onDismiss} />;
+}
+
+function StartLivePanel({
+  platform,
+  onDismiss,
+}: {
+  platform: NonNullable<Conversation['platform']>;
+  onDismiss: () => void;
+}) {
+  const client = useQueryClient();
+  const { data: room } = useRoom(platform);
+
+  const start = useMutation({
+    mutationFn: () => rpc.live.start(platform),
+    onSettled: () => client.invalidateQueries({ queryKey: ['conversations'] }),
+  });
+
+  return (
+    <div className="start-live-overlay">
+      <div className="grid max-w-sm justify-items-center gap-3 text-center">
+        <PlatformIcon platform={platform} size={32} />
+        <h2 className="text-lg font-medium">{platformLabels[platform]}助手</h2>
+        <p className="text-muted-foreground text-sm tabular-nums">
+          {room ? `直播间 ${room.roomId} · ${statusLabels[room.state]}` : '还没有绑定直播间'}
+        </p>
+        <p className="text-muted-foreground text-xs leading-relaxed">
+          开播后会推荐本场话题，并开始礼物答谢、进场分析、冷场与热度等提醒。
+        </p>
+        <Button
+          size="lg"
+          className="mt-2 min-w-36"
+          disabled={!room || start.isPending}
+          onClick={() => start.mutate()}
+        >
+          <Radio data-icon="inline-start" />
+          {start.isPending ? '正在开播…' : '开播'}
+        </Button>
+        {!room && (
+          <Link
+            to="/settings"
+            className="text-foreground text-xs underline-offset-3 hover:underline"
+          >
+            去设置绑定直播间
+          </Link>
+        )}
+        {start.isError && (
+          <p role="alert" className="text-destructive text-xs">
+            {start.error.message}
+          </p>
+        )}
+        <button
+          type="button"
+          className="text-muted-foreground hover:text-foreground text-xs underline-offset-3 hover:underline"
+          onClick={onDismiss}
+        >
+          先在这里准备
+        </button>
+      </div>
+    </div>
   );
 }

@@ -23,10 +23,10 @@ export function createLiveSessions(workspace: Workspace, assistant: Assistant) {
       conversation?.liveStartedAt &&
       workspace.settings.assistant().liveStart.enabled
     ) {
-      await assistant.run(conversation.id, {
-        kind: 'liveStart',
-        startedAt: conversation.liveStartedAt,
-      });
+      // 话题推荐在后台进行，开播操作立即完成。
+      void assistant
+        .run(conversation.id, { kind: 'liveStart', startedAt: conversation.liveStartedAt })
+        .catch((error: unknown) => console.error('开播话题推荐失败', platform, error));
     }
   }
 
