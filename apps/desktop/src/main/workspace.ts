@@ -419,7 +419,7 @@ export function openWorkspace(directory: string) {
       onTitle: canRename(conversation) ? title => rename(title, conversation.id) : undefined,
       // 普通会话可以跨平台读取历史会话。
       historyScopes: conversation.platform ? [] : platforms,
-      systemPrompt: settings.agent().systemPrompt,
+      systemPromptExtra: settings.agent().systemPromptExtra,
       builtinTools: settings.agent().builtinTools,
       context: roomContext(conversation),
       ...target,

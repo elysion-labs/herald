@@ -1,9 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { FolderOpen, RotateCcw } from 'lucide-react';
+import { ChevronRight, Eraser, FolderOpen } from 'lucide-react';
 import { useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Field, FieldContent, FieldDescription, FieldLabel } from '@/components/ui/field';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
@@ -39,13 +40,11 @@ export function SystemPromptSettings() {
     <Card>
       <CardHeader>
         <CardTitle>系统提示词</CardTitle>
-        <CardDescription>
-          Herald 的角色设定。pi 会在后面附上可用 skill 列表、APPEND_SYSTEM.md 与上下文文件。
-        </CardDescription>
+        <CardDescription>Herald 始终使用内置提示词。你可以追加适合自己直播的要求。</CardDescription>
       </CardHeader>
       <CardContent>
         {data ? (
-          <SystemPromptForm key={data.systemPrompt ?? '@default'} state={data} />
+          <SystemPromptForm key={data.systemPromptExtra} state={data} />
         ) : (
           <p role={error ? 'alert' : 'status'} className="text-muted-foreground text-sm">
             {error?.message ?? '正在加载…'}
@@ -58,31 +57,52 @@ export function SystemPromptSettings() {
 
 function SystemPromptForm({ state }: { state: AgentState }) {
   const save = useSaveAgent();
-  const [draft, setDraft] = useState(state.systemPrompt ?? state.defaultSystemPrompt);
-  const custom = state.systemPrompt !== null;
-  const dirty = draft !== (state.systemPrompt ?? state.defaultSystemPrompt);
-  let promptStatus = custom ? '已使用自定义提示词' : '使用默认提示词';
-
-  if (save.isError) {
-    promptStatus = save.error.message;
-  }
+  const [draft, setDraft] = useState(state.systemPromptExtra);
+  const value = draft.trim();
+  const dirty = value !== state.systemPromptExtra;
 
   return (
     <form
       className="grid gap-3"
       onSubmit={event => {
         event.preventDefault();
-        const value = draft.trim();
-        save.mutate({ systemPrompt: value && value !== state.defaultSystemPrompt ? value : null });
+
+        if (dirty && !save.isPending) {
+          save.mutate({ systemPromptExtra: value });
+        }
       }}
     >
-      <Textarea
-        aria-label="系统提示词"
-        className="min-h-64 font-mono text-[13px] leading-relaxed"
-        maxLength={8000}
-        value={draft}
-        onChange={event => setDraft(event.target.value)}
-      />
+      <Collapsible className="rounded-md border px-3 py-2">
+        <CollapsibleTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="group/trigger text-muted-foreground"
+          >
+            <ChevronRight
+              data-icon="inline-start"
+              className="group-data-[state=open]/trigger:rotate-90"
+            />
+            内置提示词（只读）
+          </Button>
+        </CollapsibleTrigger>
+        <CollapsibleContent className="text-muted-foreground px-2 pt-2 pb-1 text-sm leading-relaxed whitespace-pre-wrap">
+          {state.defaultSystemPrompt}
+        </CollapsibleContent>
+      </Collapsible>
+      <Field>
+        <FieldLabel htmlFor="system-prompt-extra">扩展提示词</FieldLabel>
+        <Textarea
+          id="system-prompt-extra"
+          className="min-h-32"
+          placeholder="补充直播风格、称呼习惯或需要避开的内容"
+          maxLength={8000}
+          value={draft}
+          disabled={save.isPending}
+          onChange={event => setDraft(event.target.value)}
+        />
+      </Field>
       <div className="flex flex-wrap items-center gap-2">
         <Button type="submit" disabled={!dirty || save.isPending}>
           保存
@@ -90,17 +110,20 @@ function SystemPromptForm({ state }: { state: AgentState }) {
         <Button
           type="button"
           variant="ghost"
-          disabled={(!custom && !dirty) || save.isPending}
+          disabled={(!draft && !state.systemPromptExtra) || save.isPending}
           onClick={() => {
-            setDraft(state.defaultSystemPrompt);
-            save.mutate({ systemPrompt: null });
+            setDraft('');
+
+            if (state.systemPromptExtra) {
+              save.mutate({ systemPromptExtra: '' });
+            }
           }}
         >
-          <RotateCcw data-icon="inline-start" />
-          恢复默认
+          <Eraser data-icon="inline-start" />
+          清空
         </Button>
         <span className="text-muted-foreground ml-auto text-xs" aria-live="polite">
-          {promptStatus}
+          {save.error?.message}
         </span>
       </div>
     </form>

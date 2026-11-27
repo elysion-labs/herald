@@ -10,14 +10,13 @@ export const builtinToolLabels: Record<(typeof builtinTools)[number], string> = 
 };
 
 export const agentSettings = z.object({
-  /** null 表示使用内置默认提示词。 */
-  systemPrompt: z.string().max(8000).nullable(),
+  systemPromptExtra: z.string().max(8000),
   builtinTools: z.object({ write: z.boolean(), edit: z.boolean(), exec: z.boolean() }),
 });
 
 export type AgentSettings = z.infer<typeof agentSettings>;
 
 export const defaultAgentSettings: AgentSettings = {
-  systemPrompt: null,
+  systemPromptExtra: '',
   builtinTools: { write: false, edit: false, exec: false },
 };

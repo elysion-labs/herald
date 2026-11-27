@@ -117,8 +117,8 @@ interface LiveAgentOptions {
   historyScopes?: readonly SessionScope[];
   /** 标题写入 session jsonl 之后的回调，用于同步会话列表索引；不传时不提供标题工具。 */
   onTitle?: (title: string) => void;
-  /** 用户自定义的角色提示词；为空时使用 defaultSystemPrompt。 */
-  systemPrompt?: string | null;
+  /** 追加到内置提示词之后的用户扩展。 */
+  systemPromptExtra?: string;
   /** pi 内置的写入、编辑与命令执行工具，默认全部关闭。 */
   builtinTools?: Partial<Record<BuiltinTool, boolean>>;
   /** 追加在系统提示词末尾的宿主信息，例如当前绑定的直播间；变化很少，不影响提示缓存。 */
@@ -197,7 +197,7 @@ export async function createLiveAgent({
   tools = [],
   historyScopes = [],
   onTitle,
-  systemPrompt,
+  systemPromptExtra = '',
   builtinTools = {},
   context,
 }: LiveAgentOptions) {
@@ -224,8 +224,9 @@ export async function createLiveAgent({
     settingsManager,
     additionalSkillPaths: bundled,
     extensionFactories: [createMcpExtension()],
-    systemPromptOverride: () => (systemPrompt?.trim() ? systemPrompt.trim() : defaultSystemPrompt),
-    appendSystemPromptOverride: base => (context ? [...base, context] : base),
+    systemPromptOverride: () => defaultSystemPrompt,
+    appendSystemPromptOverride: base =>
+      [systemPromptExtra.trim(), ...base, context].filter((part): part is string => Boolean(part)),
     skillsOverride: base => ({
       ...base,
       skills: base.skills.filter(
