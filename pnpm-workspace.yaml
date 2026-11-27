@@ -48,3 +48,4 @@ minimumReleaseAgeExclude:
   - '@voidzero-dev/vite-plus-win32-arm64-msvc@1.8.0'
   - '@voidzero-dev/vite-plus-win32-x64-msvc@1.8.0'
   - vite-plus@1.8.0
+  - '@elysionjs/dylive-ws@0.1.1'

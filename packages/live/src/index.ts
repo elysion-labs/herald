@@ -1,9 +1,23 @@
 import { createClient as createBilibiliClient } from '@elysionjs/blive-ws';
+import type { BiliEvent as BilibiliEvent } from '@elysionjs/blive-ws';
 import { createClient as createDouyinClient } from '@elysionjs/dylive-ws';
+import type { LiveEvent as DouyinEvent, LiveUser as DouyinUser } from '@elysionjs/dylive-ws';
 import { parseCookie } from 'cookie';
 import { WebSocket } from 'ws';
 
 export type LivePlatform = 'bilibili' | 'douyin';
+
+/** 观众身份信息，用于判断是否值得互动。 */
+export interface LiveViewer {
+  id: string | null;
+  name: string | null;
+  /** B 站粉丝牌 / 抖音粉丝团灯牌。 */
+  badge: { name: string; level: number } | null;
+  /** B 站大航海：1 总督、2 提督、3 舰长。 */
+  guardLevel: number | null;
+  /** 抖音财富等级。 */
+  payLevel: number | null;
+}
 
 export interface LiveChatMessage {
   platform: LivePlatform;
@@ -12,15 +26,35 @@ export interface LiveChatMessage {
   deduplicationKey: string | null;
   authorId: string | null;
   authorName: string | null;
+  viewer: LiveViewer;
   text: string;
   receivedAt: number;
 }
+
+interface ActivityBase {
+  platform: LivePlatform;
+  roomId: string;
+  key: string | null;
+  viewer: LiveViewer;
+  receivedAt: number;
+}
+
+/** 弹幕以外的互动：礼物、醒目留言、上舰、进场、关注。金额统一为人民币元。 */
+export type LiveActivity = ActivityBase &
+  (
+    | { kind: 'gift'; giftName: string; count: number; value: number | null }
+    | { kind: 'superChat'; text: string; value: number }
+    | { kind: 'guard'; guardName: string; value: number }
+    | { kind: 'entry' }
+    | { kind: 'follow' }
+  );
 
 interface LiveChatOptions {
   platform: LivePlatform;
   roomId: string;
   readCookie?: (signal: AbortSignal) => Promise<string | null>;
   onMessage: (message: LiveChatMessage) => void;
+  onActivity?: (activity: LiveActivity) => void;
   onError: (error: Error) => void;
   /** 平台推送的开播 / 下播事件（目前只有 B 站会推送）。 */
   onLiveStatus?: (status: LiveStatus) => void;
@@ -253,11 +287,100 @@ export async function fetchLiveStatus(
   }
 }
 
+function bilibiliViewer(
+  user: {
+    id: number;
+    name: string | null;
+    guardLevel: number | null;
+  },
+  medal?: { name: string; level: number } | null,
+): LiveViewer {
+  return {
+    id: user.id > 0 ? String(user.id) : null,
+    name: user.name,
+    badge: medal ? { name: medal.name, level: medal.level } : null,
+    guardLevel: (user.guardLevel ?? 0) > 0 ? user.guardLevel : null,
+    payLevel: null,
+  };
+}
+
+function douyinViewer(user: DouyinUser): LiveViewer {
+  return {
+    id: user.id ?? null,
+    name: user.name || null,
+    badge: user.fansClub ?? null,
+    guardLevel: null,
+    payLevel: user.payLevel ?? null,
+  };
+}
+
+type ActivityDetail = LiveActivity extends infer Item
+  ? Item extends ActivityBase
+    ? Omit<Item, keyof ActivityBase>
+    : never
+  : never;
+
+/** B 站事件转为互动；弹幕与开播状态另行处理，其余返回 undefined。 */
+function bilibiliActivity(event: BilibiliEvent): [LiveViewer, ActivityDetail] | undefined {
+  if (event.type === 'gift') {
+    return [
+      bilibiliViewer(event.user, event.medal),
+      { kind: 'gift', giftName: event.giftName, count: event.quantity, value: event.price },
+    ];
+  }
+
+  if (event.type === 'superChat') {
+    return [
+      bilibiliViewer(event.user, event.medal),
+      { kind: 'superChat', text: event.content, value: event.price },
+    ];
+  }
+
+  if (event.type === 'guard') {
+    return [
+      bilibiliViewer(event.user),
+      { kind: 'guard', guardName: event.guardName, value: event.price },
+    ];
+  }
+
+  return event.type === 'entry'
+    ? [bilibiliViewer(event.user, event.medal), { kind: 'entry' }]
+    : undefined;
+}
+
+/** 抖音事件转为互动；连击礼物只在连击结束时上报一次（10 钻 = 1 元）。 */
+function douyinActivity(event: DouyinEvent): ActivityDetail | undefined {
+  if (event.type === 'gift') {
+    if (event.gift.combo && !event.repeatEnd) {
+      return undefined;
+    }
+
+    const count =
+      event.totalCount ?? (event.comboCount || event.repeatCount || event.groupCount || 1);
+
+    const diamonds = event.gift.diamondCount;
+
+    return {
+      kind: 'gift',
+      giftName: event.gift.name ?? '礼物',
+      count,
+      value: diamonds === undefined ? null : (diamonds * count) / 10,
+    };
+  }
+
+  if (event.type === 'member') {
+    return { kind: 'entry' };
+  }
+
+  return event.type === 'follow' ? { kind: 'follow' } : undefined;
+}
+
 export function createLiveChat({
   platform,
   roomId,
   readCookie,
   onMessage,
+  onActivity,
   onError,
   onLiveStatus,
 }: LiveChatOptions) {
@@ -284,26 +407,45 @@ export function createLiveChat({
 
     client.on('error', onError);
     client.on('event', event => {
+      const eventRoom = event.roomId?.toString() ?? room;
+
       if (event.type === 'liveStart' || event.type === 'liveEnd') {
         onLiveStatus?.(event.type === 'liveStart' ? 'live' : 'offline');
 
         return;
       }
 
-      if (event.type !== 'message') {
+      if (event.type === 'message') {
+        const viewer = bilibiliViewer(event.user, event.medal);
+
+        onMessage({
+          platform,
+          roomId: eventRoom,
+          sourceId: event.sourceId,
+          deduplicationKey: event.key,
+          authorId: viewer.id,
+          authorName: event.user.name,
+          viewer,
+          text: event.content,
+          receivedAt: Date.now(),
+        });
+
         return;
       }
 
-      onMessage({
-        platform,
-        roomId: event.roomId?.toString() ?? room,
-        sourceId: event.sourceId,
-        deduplicationKey: event.key,
-        authorId: event.user.id > 0 ? String(event.user.id) : null,
-        authorName: event.user.name,
-        text: event.content,
-        receivedAt: Date.now(),
-      });
+      const activity = bilibiliActivity(event);
+
+      if (activity) {
+        const [viewer, detail] = activity;
+        onActivity?.({
+          platform,
+          roomId: eventRoom,
+          key: event.key,
+          viewer,
+          receivedAt: Date.now(),
+          ...detail,
+        });
+      }
     });
 
     return {
@@ -320,18 +462,39 @@ export function createLiveChat({
   });
 
   client.on('error', onError);
-  client.on('event', event =>
-    onMessage({
-      platform,
-      roomId: event.roomId ?? room,
-      sourceId: event.id ?? null,
-      deduplicationKey: event.id ? `${event.roomId ?? room}:${event.id}` : null,
-      authorId: event.user.id ?? null,
-      authorName: event.user.name || null,
-      text: event.content,
-      receivedAt: Date.now(),
-    }),
-  );
+  client.on('event', event => {
+    const eventRoom = event.roomId ?? room;
+    const viewer = douyinViewer(event.user);
+
+    if (event.type === 'message') {
+      onMessage({
+        platform,
+        roomId: eventRoom,
+        sourceId: event.id ?? null,
+        deduplicationKey: event.id ? `${eventRoom}:${event.id}` : null,
+        authorId: viewer.id,
+        authorName: viewer.name,
+        viewer,
+        text: event.content,
+        receivedAt: Date.now(),
+      });
+
+      return;
+    }
+
+    const detail = douyinActivity(event);
+
+    if (detail) {
+      onActivity?.({
+        platform,
+        roomId: eventRoom,
+        key: event.id ? `${eventRoom}:${event.id}` : null,
+        viewer,
+        receivedAt: Date.now(),
+        ...detail,
+      });
+    }
+  });
 
   return {
     start: () => client.start(),

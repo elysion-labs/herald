@@ -427,11 +427,11 @@ importers:
   packages/live:
     dependencies:
       '@elysionjs/blive-ws':
-        specifier: link:../../vendor/blive-ws
-        version: link:../../vendor/blive-ws
+        specifier: ^0.1.0
+        version: 0.1.0(electron@45.4.1)
       '@elysionjs/dylive-ws':
-        specifier: link:../../vendor/dylive-ws
-        version: link:../../vendor/dylive-ws
+        specifier: ^0.1.1
+        version: 0.1.1(electron@45.4.1)
       cookie:
         specifier: 'catalog:'
         version: 2.0.2
@@ -777,6 +777,24 @@ packages:
   '@electron/get@5.1.0':
     resolution: {integrity: sha512-3kSBtG8ObcTVfXanm5vVJ6UnBLEVmVsRk1M+vGqCuMBV+XLCbJYuWQful+yIy0GQDsSlK0kHEriEHn7SPk4EnA==}
     engines: {node: '>=22.12.0'}
+
+  '@elysionjs/blive-ws@0.1.0':
+    resolution: {integrity: sha512-JWWLYYkzVioUonBHXZYhEChu+dChJTmcfmORrniz6A0IGVM6zzW0UGZ5ayEfTOSSl10McbB1V8bSN6J4xQ4c+A==}
+    engines: {bun: '>=1.4.4', node: '>=24.0.0'}
+    peerDependencies:
+      electron: '*'
+    peerDependenciesMeta:
+      electron:
+        optional: true
+
+  '@elysionjs/dylive-ws@0.1.1':
+    resolution: {integrity: sha512-U503Ui5dcL3w+pNJlffqa+t120nu7ysLIlvWaoybnLrXfvrFqryz3plh+rfows1Hs1m9w5yY3id9l5FCk/5HQA==}
+    engines: {bun: '>=1.4.4', node: '>=24.0.0'}
+    peerDependencies:
+      electron: '*'
+    peerDependenciesMeta:
+      electron:
+        optional: true
 
   '@esbuild/aix-ppc64@0.25.12':
     resolution: {integrity: sha512-Hhmwd6CInZ3dwpuGTF8fJG6yoWmsToE+vYgD4nytZVxcu1ulHpUQRAB1UJ8+N1Am3Mz4+xOByoQoSZf4D+CpkA==}
@@ -5615,6 +5633,24 @@ snapshots:
       undici: 7.30.2
     transitivePeerDependencies:
       - supports-color
+
+  '@elysionjs/blive-ws@0.1.0(electron@45.4.1)':
+    optionalDependencies:
+      cookie: 2.0.2
+      electron: 45.4.1
+      ws: 8.23.0
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
+
+  '@elysionjs/dylive-ws@0.1.1(electron@45.4.1)':
+    dependencies:
+      ws: 8.23.0
+    optionalDependencies:
+      electron: 45.4.1
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
 
   '@esbuild/aix-ppc64@0.25.12':
     optional: true

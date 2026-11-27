@@ -31,10 +31,9 @@
 
 ## 快速开始
 
-需要 Git、Node.js 24+ 和 [Vite+](https://viteplus.dev/)。首次运行会把 `blive-ws` 和 `dylive-ws` 的固定版本克隆到 `vendor/`，按各自的锁文件安装并构建，Herald 通过 pnpm 本地链接使用它们。
+需要 Node.js 24+ 和 [Vite+](https://viteplus.dev/)。B 站和抖音的弹幕客户端来自 npm 上的 [`@elysionjs/blive-ws`](https://github.com/elysion-labs/blive-ws) 和 [`@elysionjs/dylive-ws`](https://github.com/elysion-labs/dylive-ws)。
 
 ```sh
-vpx ./scripts/setup-vendor.ts
 vp install
 vp run dev
 ```
@@ -44,8 +43,6 @@ vp run dev
 1. 在 **设置 › 直播与模型** 登录平台账号，绑定直播间，并配置一个模型供应商。
 2. 打开侧栏顶部「直播助手」下对应平台的会话。实时弹幕栏和提醒卡片会出现在聊天和浏览器之间。
 3. 需要和直播无关的对话时，点击「会话」旁的加号新建普通会话。
-
-已有的克隆可以重复运行 setup，也可以用 `vp run setup` 重新构建这两个依赖。更新上游版本时，修改 `scripts/setup-vendor.ts` 中的提交号，再运行 setup。
 
 <a id="modes"></a>
 
