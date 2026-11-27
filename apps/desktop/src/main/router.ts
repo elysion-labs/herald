@@ -172,6 +172,21 @@ export function createRouter(
         .input(assistantSettings.partial())
         .handler(({ input }) => workspace.settings.saveAssistant(input)),
       watch: os.handler(({ signal }) => assistant.watch(signal)),
+      typing: os.input(z.uuid()).handler(({ input }) => assistant.typing(input)),
+      feedback: os
+        .input(
+          z.object({
+            conversationId: z.uuid(),
+            summary: z.string().trim().min(1).max(300),
+            verdict: z.enum(['adopt', 'ignore']),
+          }),
+        )
+        .handler(({ input }) =>
+          workspace.addFeedback(
+            input.conversationId,
+            `${input.verdict === 'adopt' ? '采纳了' : '忽略了'}「${input.summary}」`,
+          ),
+        ),
     },
     settings: {
       agent: os.handler(() => workspace.settings.agentState()),

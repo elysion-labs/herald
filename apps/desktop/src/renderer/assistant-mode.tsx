@@ -1,7 +1,7 @@
 import { describeTrigger, liveTime } from '@herald/live-assistant/settings';
 import type { ReminderTrigger } from '@herald/live-assistant/settings';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Radio, Square } from 'lucide-react';
+import { Radio, Square, ThumbsDown, ThumbsUp } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
@@ -12,14 +12,17 @@ export type Conversation = Awaited<ReturnType<typeof rpc.conversations.list>>[nu
 
 /** 弹幕栏顶部：当前助手会话的实时提醒卡片。 */
 export function AssistantReminders({ conversationId }: { conversationId: string }) {
-  return <ReminderCards cards={useReminderCards(conversationId)} />;
+  return <ReminderCards conversationId={conversationId} cards={useReminderCards(conversationId)} />;
 }
 
 interface ReminderCard {
   key: number;
   trigger: ReminderTrigger;
   text: string;
+  done: boolean;
 }
+
+type Verdict = 'adopt' | 'ignore';
 
 const keepCards = 3;
 
@@ -42,12 +45,16 @@ function useReminderCards(conversationId: string) {
 
           if (event.phase === 'start') {
             key += 1;
-            const card = { key, trigger: event.trigger, text: '' };
+            const card = { key, trigger: event.trigger, text: '', done: false };
             setCards(current => [...current, card].slice(-keepCards));
           } else if (event.phase === 'update') {
             const text = event.turns.map(turn => turn.text).join('\n');
             setCards(current => current.map(card => (card.key === key ? { ...card, text } : card)));
-          } else if (!event.delivered) {
+          } else if (event.delivered) {
+            setCards(current =>
+              current.map(card => (card.key === key ? { ...card, done: true } : card)),
+            );
+          } else {
             setCards(current => current.filter(card => card.key !== key));
           }
         }
@@ -66,7 +73,61 @@ function useReminderCards(conversationId: string) {
   return cards;
 }
 
-function ReminderCards({ cards }: { cards: ReminderCard[] }) {
+/** 采纳 / 忽略：反馈会在该会话下次运行时交给 agent，用于调整之后的建议。 */
+function CardFeedback({ conversationId, card }: { conversationId: string; card: ReminderCard }) {
+  const [verdict, setVerdict] = useState<Verdict>();
+
+  const send = useMutation({
+    mutationFn: (next: Verdict) =>
+      rpc.assistant.feedback({
+        conversationId,
+        verdict: next,
+        summary: `${describeTrigger(card.trigger)}：${card.text.slice(0, 120)}`.slice(0, 300),
+      }),
+    onSuccess: (_, next) => setVerdict(next),
+  });
+
+  if (verdict) {
+    return (
+      <p className="text-muted-foreground text-[11px]">
+        {verdict === 'adopt' ? '已采纳' : '已忽略'}
+      </p>
+    );
+  }
+
+  return (
+    <div className="flex gap-1">
+      <Button
+        size="xs"
+        variant="ghost"
+        className="text-muted-foreground hover:text-foreground"
+        disabled={send.isPending}
+        onClick={() => send.mutate('adopt')}
+      >
+        <ThumbsUp data-icon="inline-start" />
+        采纳
+      </Button>
+      <Button
+        size="xs"
+        variant="ghost"
+        className="text-muted-foreground hover:text-foreground"
+        disabled={send.isPending}
+        onClick={() => send.mutate('ignore')}
+      >
+        <ThumbsDown data-icon="inline-start" />
+        忽略
+      </Button>
+    </div>
+  );
+}
+
+function ReminderCards({
+  conversationId,
+  cards,
+}: {
+  conversationId: string;
+  cards: ReminderCard[];
+}) {
   if (!cards.length) {
     return null;
   }
@@ -81,6 +142,7 @@ function ReminderCards({ cards }: { cards: ReminderCard[] }) {
           <p className="line-clamp-4 text-[13px] leading-snug whitespace-pre-wrap">
             {card.text || '正在准备建议…'}
           </p>
+          {card.done && <CardFeedback conversationId={conversationId} card={card} />}
         </li>
       ))}
     </ol>

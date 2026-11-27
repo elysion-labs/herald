@@ -21,6 +21,7 @@ import type { Conversation } from './assistant-mode.tsx';
 import { ChatModelControls } from './chat-model-controls.tsx';
 import { ContextUsage } from './context-usage.tsx';
 import { QuickPrompts } from './quick-prompts.tsx';
+import { rpc } from './rpc.ts';
 
 export interface ComposerMessage {
   text: string;
@@ -88,6 +89,18 @@ export function ChatComposer({
   const [text, setText] = useState('');
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [problem, setProblem] = useState<string>();
+  const typingReported = useRef(0);
+
+  /** 助手会话里主播正在输入时，告诉调度器先暂存非紧急提醒（最多每 3 秒一次）。 */
+  function reportTyping() {
+    const now = Date.now();
+
+    if (conversation?.mode === 'assistant' && now - typingReported.current > 3000) {
+      typingReported.current = now;
+      void rpc.assistant.typing(id).catch(() => undefined);
+    }
+  }
+
   const canSend = Boolean(text.trim() || drafts.length) && !locked;
 
   const latest = useRef(drafts);
@@ -206,7 +219,10 @@ export function ChatComposer({
           placeholder="给 Herald 发消息…"
           value={text}
           readOnly={busy}
-          onChange={event => setText(event.target.value)}
+          onChange={event => {
+            setText(event.target.value);
+            reportTyping();
+          }}
           onPaste={paste}
           onKeyDown={event => {
             if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {

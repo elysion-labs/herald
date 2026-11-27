@@ -204,6 +204,8 @@ export function openWorkspace(directory: string) {
     db.update(conversations).set({ title }).where(eq(conversations.id, id)).run();
 
   const running = new Set<string>();
+  /** 主播对提醒的采纳 / 忽略反馈，在该会话下次运行时作为上下文注入。 */
+  const feedback = new Map<string, string[]>();
   queueMicrotask(() => ensureAssistants());
   const models = openModelSettings(db, directory);
   const settings = openAppSettings(db, directory);
@@ -423,6 +425,20 @@ export function openWorkspace(directory: string) {
       ...target,
     });
 
+    const notes = feedback.get(conversation.id);
+
+    if (notes?.length) {
+      feedback.delete(conversation.id);
+      await agent.session.sendCustomMessage(
+        {
+          customType: 'herald-feedback',
+          display: false,
+          content: `主播对之前提醒的反馈，之后的建议请参考：\n${notes.map(note => `- ${note}`).join('\n')}`,
+        },
+        { deliverAs: 'nextTurn' },
+      );
+    }
+
     return agent;
   }
 
@@ -434,6 +450,10 @@ export function openWorkspace(directory: string) {
     settings,
     conversation: getConversation,
     isRunning: (id: string) => running.has(id),
+    addFeedback(id: string, note: string) {
+      getConversation(id);
+      feedback.set(id, [...(feedback.get(id) ?? []), note].slice(-20));
+    },
     /** 新建普通会话，不区分平台。 */
     create() {
       const id = randomUUID();

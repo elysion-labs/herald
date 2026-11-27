@@ -67,6 +67,8 @@ interface PlatformState {
 }
 
 const tickInterval = 5000;
+/** 主播最后一次输入后这么久内，非紧急提醒先暂存。 */
+const typingHold = 8000;
 
 /**
  * 弹幕自动提醒的调度：规则触发（冷场、有记忆的观众、关注词）与定时批量分析。
@@ -96,6 +98,10 @@ export function createLiveAssistant<Turns>(host: AssistantHost<Turns>) {
 
   /** 提醒只发给该平台的助手会话。 */
   const target = (platform: LivePlatform) => host.assistantConversation(platform);
+  const typingAt = new Map<string, number>();
+
+  const typing = (conversationId: string) =>
+    Date.now() - (typingAt.get(conversationId) ?? 0) < typingHold;
 
   /** urgent：答谢等时效性强的提醒，不受全局提醒间隔限制。 */
   function fire(platform: LivePlatform, trigger: ReminderTrigger, urgent = false) {
@@ -109,8 +115,8 @@ export function createLiveAssistant<Turns>(host: AssistantHost<Turns>) {
       return false;
     }
 
-    // 会话正在回复时只保留最新一条，空闲后补发；冷场提醒过时就没有意义，直接丢弃。
-    if (host.isRunning(conversationId)) {
+    // 会话正在回复或主播正在输入时只保留最新一条，之后补发；冷场提醒过时就没有意义，直接丢弃。
+    if (host.isRunning(conversationId) || (!urgent && typing(conversationId))) {
       if (trigger.kind !== 'silence') {
         state.pending = trigger;
       }
@@ -353,7 +359,7 @@ export function createLiveAssistant<Turns>(host: AssistantHost<Turns>) {
         continue;
       }
 
-      if (state.pending && !host.isRunning(conversationId)) {
+      if (state.pending && !host.isRunning(conversationId) && !typing(conversationId)) {
         fire(platform, state.pending);
         continue;
       }
@@ -383,6 +389,10 @@ export function createLiveAssistant<Turns>(host: AssistantHost<Turns>) {
       }
 
       await deliver(conversationId, trigger);
+    },
+    /** 主播正在助手会话里输入。 */
+    typing(conversationId: string) {
+      typingAt.set(conversationId, Date.now());
     },
     async *watch(signal?: AbortSignal) {
       const updates = on(events, 'event', { signal });
