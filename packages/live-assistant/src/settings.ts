@@ -86,7 +86,17 @@ export const defaultAssistantSettings: AssistantSettings = {
   cooldownSeconds: 60,
 };
 
-export const reminderTrigger = z.discriminatedUnion('kind', [
+const entryViewer = z.object({
+  platform,
+  viewerId: z.string(),
+  viewerName: z.string().nullable(),
+  identity: z.string(),
+  facts: z.string().array(),
+});
+
+export type EntryViewer = z.infer<typeof entryViewer>;
+
+const currentReminderTrigger = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('silence'), seconds: z.number() }),
   z.object({
     kind: z.literal('viewer'),
@@ -116,11 +126,7 @@ export const reminderTrigger = z.discriminatedUnion('kind', [
   }),
   z.object({
     kind: z.literal('entry'),
-    platform,
-    viewerId: z.string(),
-    viewerName: z.string().nullable(),
-    identity: z.string(),
-    facts: z.string().array(),
+    viewers: entryViewer.array().min(1),
   }),
   z.object({
     kind: z.literal('heat'),
@@ -136,6 +142,13 @@ export const reminderTrigger = z.discriminatedUnion('kind', [
     text: z.string(),
   }),
 ]);
+
+/** 已保存的单人进场提醒在读取时转成同样的观众列表。 */
+const legacyEntryTrigger = entryViewer
+  .extend({ kind: z.literal('entry') })
+  .transform(({ kind, ...viewer }) => ({ kind, viewers: [viewer] }));
+
+export const reminderTrigger = z.union([currentReminderTrigger, legacyEntryTrigger]);
 
 /** 开播推荐、下播复盘与礼物答谢必须给出结果，不能回复 SKIP。 */
 export function isLifecycleTrigger(trigger: ReminderTrigger) {
@@ -164,7 +177,23 @@ const summaries: Summary = {
   liveStart: trigger => `${liveTime(trigger.startedAt)} 开播`,
   liveEnd: trigger => `${liveTime(trigger.startedAt)} 至 ${liveTime(trigger.endedAt)}`,
   gift: trigger => `${trigger.viewerName ?? '观众'} ${trigger.item}`,
-  entry: trigger => `${trigger.viewerName ?? trigger.viewerId} 进场 · ${trigger.identity}`,
+  entry: ({ viewers }) => {
+    const [first, second] = viewers;
+
+    if (!first) {
+      return '观众进场';
+    }
+
+    const name = first.viewerName ?? first.viewerId;
+
+    if (!second) {
+      return `${name} 进场 · ${first.identity}`;
+    }
+
+    const names = `${name}、${second.viewerName ?? second.viewerId}`;
+
+    return viewers.length === 2 ? `${names} 进场` : `${names} 等 ${viewers.length} 人进场`;
+  },
   welcome: trigger => `${trigger.viewerName ?? trigger.viewerId}：${trigger.text}`,
   heat: trigger =>
     `弹幕${trigger.direction === 'up' ? '升到' : '降到'} ${trigger.current} 条/分（之前平均 ${trigger.baseline}）`,
@@ -175,4 +204,19 @@ export function describeTrigger(trigger: ReminderTrigger) {
   const summarize = summaries[trigger.kind] as (value: ReminderTrigger) => string;
 
   return summarize(trigger);
+}
+
+/** 只有单一来源平台的提醒才显示该平台的图标。 */
+export function reminderPlatform(trigger: ReminderTrigger) {
+  if ('platform' in trigger) {
+    return trigger.platform;
+  }
+
+  if (trigger.kind === 'entry') {
+    const [first] = trigger.viewers;
+
+    if (first && trigger.viewers.every(viewer => viewer.platform === first.platform)) {
+      return first.platform;
+    }
+  }
 }

@@ -52,16 +52,29 @@ export function giftTrigger(
   };
 }
 
-/** 进场观众是否满足任意一项分析条件。 */
-export function entryQualifies(
+/** 取观众满足的最高优先级条件，等级类条件再按等级排序。 */
+export function entryPriority(
   viewer: LiveViewer,
   hasMemory: boolean,
   entry: AssistantSettings['entry'],
-) {
-  return (
-    (entry.withMemory && hasMemory) ||
-    (entry.guard && Boolean(viewer.guardLevel)) ||
-    (entry.minBadgeLevel > 0 && (viewer.badge?.level ?? 0) >= entry.minBadgeLevel) ||
-    (entry.minPayLevel > 0 && (viewer.payLevel ?? 0) >= entry.minPayLevel)
-  );
+): readonly [tier: number, level: number] | undefined {
+  if (entry.withMemory && hasMemory) {
+    return [4, 0];
+  }
+
+  if (entry.guard && viewer.guardLevel) {
+    return [3, 0];
+  }
+
+  const payLevel = viewer.payLevel ?? 0;
+
+  if (entry.minPayLevel > 0 && payLevel >= entry.minPayLevel) {
+    return [2, payLevel];
+  }
+
+  const badgeLevel = viewer.badge?.level ?? 0;
+
+  if (entry.minBadgeLevel > 0 && badgeLevel >= entry.minBadgeLevel) {
+    return [1, badgeLevel];
+  }
 }

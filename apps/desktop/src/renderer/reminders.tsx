@@ -1,4 +1,4 @@
-import { describeTrigger } from '@herald/live-assistant/settings';
+import { describeTrigger, reminderPlatform } from '@herald/live-assistant/settings';
 import type { ReminderTrigger } from '@herald/live-assistant/settings';
 import BellRing from 'kubai-icons-react/icons/bell-ring';
 import { LoaderCircle } from 'lucide-react';
@@ -85,19 +85,25 @@ export function ReminderItem({
   trigger: ReminderTrigger;
   live?: boolean;
 }) {
+  const platform = reminderPlatform(trigger);
+  const summary = describeTrigger(trigger);
+
+  const label =
+    trigger.kind === 'entry' && trigger.viewers.length > 1
+      ? '批量进场分析'
+      : triggerLabels[trigger.kind];
+
   return (
     <div className="reminder-item mx-auto flex w-full max-w-3xl items-center gap-2 px-6 pb-3">
       <span className="bg-secondary/70 flex min-w-0 items-center gap-2 rounded-full py-1 pr-3 pl-1.5 text-xs">
-        {'platform' in trigger ? (
-          <PlatformIcon platform={trigger.platform} size={16} />
+        {platform ? (
+          <PlatformIcon platform={platform} size={16} />
         ) : (
           <BellRing size={16} color="#F59E0B" className="shrink-0" />
         )}
-        <span className="text-foreground/90 shrink-0 font-medium">
-          {triggerLabels[trigger.kind]}
-        </span>
-        <span className="text-muted-foreground min-w-0 truncate" title={describeTrigger(trigger)}>
-          {describeTrigger(trigger)}
+        <span className="text-foreground/90 shrink-0 font-medium">{label}</span>
+        <span className="text-muted-foreground min-w-0 truncate" title={summary}>
+          {summary}
         </span>
       </span>
       {live && (

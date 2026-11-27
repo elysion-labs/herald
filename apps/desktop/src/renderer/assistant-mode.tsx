@@ -1,4 +1,4 @@
-import { describeTrigger, liveTime } from '@herald/live-assistant/settings';
+import { describeTrigger, liveTime, reminderPlatform } from '@herald/live-assistant/settings';
 import type { ReminderTrigger } from '@herald/live-assistant/settings';
 import { useIsMutating, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
@@ -141,20 +141,25 @@ function ReminderCards({
 
   return (
     <ol className="grid gap-1.5 px-3 pb-2" aria-label="助手提醒">
-      {cards.map(card => (
-        <li key={card.key} className="reminder-card">
-          <p className="text-muted-foreground flex min-w-0 items-center gap-1.5 text-[11px]">
-            {'platform' in card.trigger && (
-              <PlatformIcon platform={card.trigger.platform} size={12} />
-            )}
-            <span className="truncate">{describeTrigger(card.trigger)}</span>
-          </p>
-          <p className="line-clamp-4 text-[13px] leading-snug whitespace-pre-wrap">
-            {card.text || '正在准备建议…'}
-          </p>
-          {card.done && <CardFeedback conversationId={conversationId} card={card} />}
-        </li>
-      ))}
+      {cards.map(card => {
+        const platform = reminderPlatform(card.trigger);
+        const title = describeTrigger(card.trigger);
+
+        return (
+          <li key={card.key} className="reminder-card">
+            <p className="text-muted-foreground flex min-w-0 items-center gap-1.5 text-[11px]">
+              {platform ? <PlatformIcon platform={platform} size={12} /> : null}
+              <span className="truncate" title={title}>
+                {title}
+              </span>
+            </p>
+            <p className="line-clamp-4 text-[13px] leading-snug whitespace-pre-wrap">
+              {card.text || '正在准备建议…'}
+            </p>
+            {card.done && <CardFeedback conversationId={conversationId} card={card} />}
+          </li>
+        );
+      })}
     </ol>
   );
 }

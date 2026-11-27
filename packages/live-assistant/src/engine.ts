@@ -5,8 +5,8 @@ import type { LiveActivity, LivePlatform } from '@herald/live';
 
 import { createHeatState, heatTrigger, recordHeat } from './heat.ts';
 import type { HeatState } from './heat.ts';
-import { entryQualifies, giftTrigger, identityOf } from './interactions.ts';
-import type { AssistantSettings, ReminderTrigger } from './settings.ts';
+import { entryPriority, giftTrigger, identityOf } from './interactions.ts';
+import type { AssistantSettings, EntryViewer, ReminderTrigger } from './settings.ts';
 
 /** 调度需要的弹幕字段。 */
 export interface AssistantMessage {
@@ -45,6 +45,13 @@ export type AssistantEvent<Turns> =
   | { conversationId: string; phase: 'update'; turns: Turns }
   | { conversationId: string; phase: 'done'; delivered: boolean; error?: string };
 
+interface QueuedEntry {
+  key: string;
+  viewer: EntryViewer;
+  priority: NonNullable<ReturnType<typeof entryPriority>>;
+  queuedAt: number;
+}
+
 interface WorkspaceState {
   /** 助手会话运行中时暂存的最新一条提醒，空闲后再发。 */
   pending?: ReminderTrigger;
@@ -55,7 +62,8 @@ interface WorkspaceState {
   lastPeriodicAt: number;
   sincePeriodic: number;
   viewerCooldown: Map<string, number>;
-  /** 本场已分析过进场的观众。 */
+  entryQueue: QueuedEntry[];
+  /** 本场已提交进场分析的观众。 */
   entered: Set<string>;
   /** 本场已发过言的观众。 */
   spoken: Set<string>;
@@ -65,10 +73,12 @@ interface WorkspaceState {
 const tickInterval = 5000;
 /** 主播最后一次输入后这么久内，非紧急提醒先暂存。 */
 const typingHold = 8000;
+const entryQueueLimit = 5;
+const entryMaxAge = 2 * 60_000;
 
 /**
  * 弹幕自动提醒的调度：规则触发（冷场、有记忆的观众、关注词）与定时批量分析。
- * 只发给当前工作区的助手会话，受冷却时间限制；会话运行中时暂存最新一条，空闲后补发。
+ * 只发给当前工作区的助手会话。进场独立排队合并，其他提醒暂存最新一条。
  */
 export function createLiveAssistant<Turns>(host: AssistantHost<Turns>) {
   const events = new EventEmitter<{ event: [AssistantEvent<Turns>] }>();
@@ -92,6 +102,7 @@ export function createLiveAssistant<Turns>(host: AssistantHost<Turns>) {
         lastPeriodicAt: now,
         sincePeriodic: 0,
         viewerCooldown: new Map(),
+        entryQueue: [],
         entered: new Set(),
         spoken: new Set(),
         heat: createHeatState(),
@@ -104,12 +115,15 @@ export function createLiveAssistant<Turns>(host: AssistantHost<Turns>) {
   const typing = (conversationId: string) =>
     typingAt?.id === conversationId && Date.now() - typingAt.time < typingHold;
 
+  const isCooling = (now: number, cooldownSeconds: number) =>
+    now - state.lastTriggerAt < cooldownSeconds * 1000;
+
   /** urgent：答谢等时效性强的提醒，不受全局提醒间隔限制。 */
   function fire(trigger: ReminderTrigger, urgent = false) {
     const conversationId = syncSession();
     const now = Date.now();
     const { cooldownSeconds } = host.settings();
-    const cooling = !urgent && now - state.lastTriggerAt < cooldownSeconds * 1000;
+    const cooling = !urgent && isCooling(now, cooldownSeconds);
 
     if (!conversationId || cooling) {
       return false;
@@ -125,10 +139,14 @@ export function createLiveAssistant<Turns>(host: AssistantHost<Turns>) {
     }
 
     state.pending = undefined;
-    state.lastTriggerAt = now;
-    void deliver(conversationId, trigger);
+    startReminder(conversationId, trigger, now);
 
     return true;
+  }
+
+  function startReminder(conversationId: string, trigger: ReminderTrigger, now: number) {
+    state.lastTriggerAt = now;
+    void deliver(conversationId, trigger);
   }
 
   /** 交给 agent 处理一次提醒，并把开始、过程与结果广播给界面。 */
@@ -256,38 +274,90 @@ export function createLiveAssistant<Turns>(host: AssistantHost<Turns>) {
       : undefined;
   }
 
-  /** 进场分析：观众在本场首次满足进场分析条件时触发。 */
-  function onEntry(activity: LiveActivity, state: WorkspaceState, config: Config) {
-    const viewerId = activity.viewer.id;
+  function pruneEntries(now: number) {
+    state.entryQueue = state.entryQueue.filter(entry => now - entry.queuedAt < entryMaxAge);
+  }
 
-    const key = `${activity.platform}:${viewerId}`;
+  /** 符合条件后才入队，同一观众本场只提交一次分析。 */
+  function onEntry(activity: LiveActivity, settings: Config['entry']) {
+    const { platform, viewer: sourceViewer } = activity;
+    const viewerId = sourceViewer.id;
+    const key = `${platform}:${viewerId}`;
 
-    if (!viewerId || !config.entry.enabled || state.entered.has(key)) {
+    if (!viewerId || !settings.enabled || state.entered.has(key)) {
       return;
     }
 
-    const facts = host.viewerFacts(activity.platform, viewerId).slice(0, 8);
-    const { capabilities } = adapters[activity.platform];
+    const now = Date.now();
+    pruneEntries(now);
+
+    if (state.entryQueue.some(entry => entry.key === key)) {
+      return;
+    }
+
+    const facts = host.viewerFacts(platform, viewerId).slice(0, 8);
+    const { capabilities } = adapters[platform];
 
     const viewer = {
-      ...activity.viewer,
-      guardLevel: capabilities.guard ? activity.viewer.guardLevel : null,
-      badge: capabilities.badgeLevel ? activity.viewer.badge : null,
-      payLevel: capabilities.payLevel ? activity.viewer.payLevel : null,
+      ...sourceViewer,
+      guardLevel: capabilities.guard ? sourceViewer.guardLevel : null,
+      badge: capabilities.badgeLevel ? sourceViewer.badge : null,
+      payLevel: capabilities.payLevel ? sourceViewer.payLevel : null,
     };
 
-    if (entryQualifies(viewer, facts.length > 0, config.entry)) {
-      // 两种进场事件携带的资料可能不同，符合条件后才去重。
-      state.entered.add(key);
-      fire({
-        kind: 'entry',
-        platform: activity.platform,
+    const priority = entryPriority(viewer, facts.length > 0, settings);
+
+    if (!priority) {
+      return;
+    }
+
+    state.entryQueue.push({
+      key,
+      viewer: {
+        platform,
         viewerId,
         viewerName: viewer.name,
-        identity: identityOf(viewer, activity.platform),
+        identity: identityOf(viewer, platform),
         facts,
-      });
+      },
+      priority,
+      queuedAt: now,
+    });
+    // 稳定排序让同优先级的观众保持入队顺序。
+    state.entryQueue.sort((a, b) => b.priority[0] - a.priority[0] || b.priority[1] - a.priority[1]);
+
+    if (state.entryQueue.length > entryQueueLimit) {
+      state.entryQueue.pop();
     }
+  }
+
+  function checkEntries(conversationId: string, config: Config, now: number) {
+    if (!config.entry.enabled) {
+      state.entryQueue = [];
+
+      return;
+    }
+
+    pruneEntries(now);
+
+    if (
+      !state.entryQueue.length ||
+      isCooling(now, config.cooldownSeconds) ||
+      host.isRunning(conversationId) ||
+      typing(conversationId)
+    ) {
+      return;
+    }
+
+    const entries = state.entryQueue;
+    state.entryQueue = [];
+
+    for (const { key } of entries) {
+      state.entered.add(key);
+    }
+
+    const viewers = entries.map(entry => entry.viewer);
+    startReminder(conversationId, { kind: 'entry', viewers }, now);
   }
 
   /** 互动事件只在已开播的场次里处理。 */
@@ -305,7 +375,7 @@ export function createLiveAssistant<Turns>(host: AssistantHost<Turns>) {
     const config = host.settings();
 
     if (kind === 'entry') {
-      onEntry(activity, state, config);
+      onEntry(activity, config.entry);
 
       return;
     }
@@ -361,13 +431,16 @@ export function createLiveAssistant<Turns>(host: AssistantHost<Turns>) {
       }
     }
 
+    const now = Date.now();
+    const config = host.settings();
+
     if (supports(host.platforms(), 'danmaku')) {
-      const now = Date.now();
-      const config = host.settings();
       checkSilence(config, now);
       checkPeriodic(config, now);
       checkHeat(config, now);
     }
+
+    checkEntries(conversationId, config, now);
   }
 
   const unsubscribe = host.onMessage(onMessage);
