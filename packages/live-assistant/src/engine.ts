@@ -43,7 +43,15 @@ export interface AssistantHost<Turns> {
 export type AssistantEvent<Turns> =
   | { conversationId: string; phase: 'start'; trigger: ReminderTrigger }
   | { conversationId: string; phase: 'update'; turns: Turns }
-  | { conversationId: string; phase: 'done'; delivered: boolean; error?: string };
+  | { conversationId: string; phase: 'done'; delivered: boolean; error?: undefined }
+  | {
+      conversationId: string;
+      phase: 'done';
+      delivered: false;
+      trigger: ReminderTrigger;
+      error: string;
+      errorCode?: string;
+    };
 
 interface QueuedEntry {
   key: string;
@@ -164,7 +172,12 @@ export function createLiveAssistant<Turns>(host: AssistantHost<Turns>) {
         conversationId,
         phase: 'done',
         delivered: false,
+        trigger,
         error: error instanceof Error ? error.message : '提醒失败',
+        errorCode:
+          error instanceof Error && 'code' in error && typeof error.code === 'string'
+            ? error.code
+            : undefined,
       });
     }
   }

@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { freshDanmaku } from '@herald/danmaku';
 import { adapters } from '@herald/live';
 import type { LivePlatform } from '@herald/live';
-import { createRouterClient } from '@orpc/server';
+import { createRouterClient, ORPCError } from '@orpc/server';
 import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 
 import { createRouter } from './router.ts';
@@ -23,8 +23,11 @@ vi.mock('electron', () => ({
 function setup() {
   const directory = mkdtempSync(join(tmpdir(), 'herald-workspaces-'));
   const registry = openWorkspaces(directory);
-  // 这些请求不会触发 agent 的浏览器工具。
-  const browser = {} as Parameters<typeof createRouter>[1];
+
+  const browser = { webContents: {}, agentTabs: () => new Set<string>() } as Parameters<
+    typeof createRouter
+  >[1];
+
   const { router, dispose } = createRouter(registry, browser);
   const rpc = createRouterClient(router);
 
@@ -175,6 +178,66 @@ describe('工作区', () => {
       await expect(stopped).resolves.toMatchObject({ done: true });
       expect(await rpc.workspaces.list()).toEqual([b]);
       expect(await rpc.rooms.list(workspaceB)).toEqual([]);
+    } finally {
+      close();
+    }
+  });
+
+  it('开播推荐和下播复盘失败时发送带触发原因的事件，场次仍会归档', async () => {
+    vi.spyOn(adapters.douyin, 'createChat').mockReturnValue({
+      start: async () => undefined,
+      state: () => 'connected',
+      dispose: async () => undefined,
+    });
+
+    const { registry, rpc, close } = setup();
+
+    try {
+      const [workspace] = await rpc.workspaces.list();
+      const input = { workspaceId: workspace.id };
+      await rpc.workspaces.bindRoom({ ...input, platform: 'douyin', room: '2' });
+
+      vi.spyOn(registry.get(workspace.id), 'remind')
+        .mockRejectedValueOnce(
+          new ORPCError('PRECONDITION_FAILED', { message: '请在设置中配置模型凭证' }),
+        )
+        .mockRejectedValueOnce(new ORPCError('BAD_GATEWAY', { message: '模型调用失败' }));
+
+      const stream = await rpc.assistant.watch(input);
+      const start = stream.next();
+      const conversation = await rpc.live.start(input);
+      await expect(start).resolves.toMatchObject({
+        value: { phase: 'start', trigger: { kind: 'liveStart' } },
+      });
+      await expect(stream.next()).resolves.toMatchObject({
+        value: {
+          conversationId: conversation?.id,
+          phase: 'done',
+          delivered: false,
+          trigger: { kind: 'liveStart' },
+          error: '请在设置中配置模型凭证',
+          errorCode: 'PRECONDITION_FAILED',
+        },
+      });
+
+      const end = stream.next();
+      await rpc.live.end(input);
+      await expect(end).resolves.toMatchObject({
+        value: { phase: 'start', trigger: { kind: 'liveEnd' } },
+      });
+      await expect(stream.next()).resolves.toMatchObject({
+        value: {
+          conversationId: conversation?.id,
+          phase: 'done',
+          delivered: false,
+          trigger: { kind: 'liveEnd' },
+          error: '模型调用失败',
+          errorCode: 'BAD_GATEWAY',
+        },
+      });
+      expect(await rpc.conversations.list(input)).toEqual(
+        expect.arrayContaining([expect.objectContaining({ id: conversation?.id, mode: 'chat' })]),
+      );
     } finally {
       close();
     }

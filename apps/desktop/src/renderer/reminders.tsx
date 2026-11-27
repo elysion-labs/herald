@@ -1,12 +1,18 @@
 import { describeTrigger, reminderPlatform } from '@herald/live-assistant/settings';
 import type { ReminderTrigger } from '@herald/live-assistant/settings';
+import { useQueryClient } from '@tanstack/react-query';
+import { Link } from '@tanstack/react-router';
 import BellRing from 'kubai-icons-react/icons/bell-ring';
-import { LoaderCircle } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { CircleAlert, LoaderCircle, X } from 'lucide-react';
+import { createContext, useContext, useEffect, useState } from 'react';
+import type { ReactNode } from 'react';
 
+import { Button } from '@/components/ui/button';
+
+import { usageKey } from './context-usage.tsx';
 import { PlatformIcon } from './platform-icon.tsx';
 import { rpc } from './rpc.ts';
-import { useWorkspace } from './workspace-context.ts';
+import { conversationsKey, useWorkspace, workspaceKey } from './workspace-context.ts';
 
 type AssistantEvent =
   Awaited<ReturnType<typeof rpc.assistant.watch>> extends AsyncIterable<infer Event>
@@ -14,11 +20,19 @@ type AssistantEvent =
     : never;
 
 type ReminderTurns = Extract<AssistantEvent, { phase: 'update' }>['turns'];
+type ReminderFailure = Extract<AssistantEvent, { phase: 'done'; error: string }>;
 
 export interface LiveReminder {
+  conversationId: string;
   trigger: ReminderTrigger;
   turns: ReminderTurns;
 }
+
+const ReminderContext = createContext<{
+  reminder?: LiveReminder;
+  failure?: ReminderFailure;
+  dismissFailure: () => void;
+}>({ dismissFailure: () => undefined });
 
 const triggerLabels: Record<ReminderTrigger['kind'], string> = {
   silence: '冷场提醒',
@@ -33,13 +47,12 @@ const triggerLabels: Record<ReminderTrigger['kind'], string> = {
   heat: '热度变化',
 };
 
-/**
- * 订阅当前会话的后台提醒：进行中的提醒实时显示，结束后刷新历史。
- * 模型判断无需提醒（SKIP）时后端会撤销这条提醒，界面上也随之消失。
- */
-export function useLiveReminder(conversationId: string, onSettled: () => Promise<unknown>) {
+/** 按工作区订阅提醒，让下播归档和切换页面时收到的失败仍可见。 */
+export function ReminderProvider({ children }: { children: ReactNode }) {
   const { id: workspaceId } = useWorkspace();
+  const client = useQueryClient();
   const [reminder, setReminder] = useState<LiveReminder>();
+  const [failure, setFailure] = useState<ReminderFailure>();
 
   useEffect(() => {
     const controller = new AbortController();
@@ -49,17 +62,31 @@ export function useLiveReminder(conversationId: string, onSettled: () => Promise
         const stream = await rpc.assistant.watch({ workspaceId }, { signal: controller.signal });
 
         for await (const event of stream) {
-          if (event.conversationId !== conversationId) {
-            continue;
-          }
+          const { conversationId } = event;
 
           if (event.phase === 'start') {
-            setReminder({ trigger: event.trigger, turns: [] });
+            setReminder({ conversationId, trigger: event.trigger, turns: [] });
           } else if (event.phase === 'update') {
-            setReminder(current => current && { ...current, turns: event.turns });
+            setReminder(current =>
+              current?.conversationId === conversationId
+                ? { ...current, turns: event.turns }
+                : current,
+            );
           } else {
-            await onSettled();
-            setReminder(undefined);
+            if (event.error !== undefined) {
+              setFailure(event);
+            }
+
+            await Promise.all([
+              client.invalidateQueries({
+                queryKey: [...workspaceKey(workspaceId), 'history', conversationId],
+              }),
+              client.invalidateQueries({ queryKey: usageKey(workspaceId, conversationId) }),
+              client.invalidateQueries({ queryKey: conversationsKey(workspaceId) }),
+            ]);
+            setReminder(current =>
+              current?.conversationId === conversationId ? undefined : current,
+            );
           }
         }
       } catch (error) {
@@ -72,9 +99,70 @@ export function useLiveReminder(conversationId: string, onSettled: () => Promise
     void watch();
 
     return () => controller.abort();
-  }, [conversationId, onSettled, workspaceId]);
+  }, [client, workspaceId]);
 
-  return reminder;
+  return (
+    <ReminderContext value={{ reminder, failure, dismissFailure: () => setFailure(undefined) }}>
+      {children}
+    </ReminderContext>
+  );
+}
+
+export function useLiveReminder(conversationId: string) {
+  const { reminder } = useContext(ReminderContext);
+
+  return reminder?.conversationId === conversationId ? reminder : undefined;
+}
+
+export function ReminderFailureCard({
+  conversationId,
+  isAssistant,
+}: {
+  conversationId?: string;
+  isAssistant: boolean;
+}) {
+  const { failure, dismissFailure } = useContext(ReminderContext);
+
+  const isVisible =
+    failure?.conversationId === conversationId ||
+    (isAssistant && failure?.trigger.kind === 'liveEnd');
+
+  if (!failure || !isVisible) {
+    return null;
+  }
+
+  return (
+    <div className="mx-auto w-full max-w-3xl shrink-0 px-6 pt-3">
+      <div className="reminder-card">
+        <div className="flex min-w-0 items-start gap-2">
+          <div role="alert" className="min-w-0 flex-1 space-y-0.5">
+            <p className="text-destructive flex items-center gap-1.5 text-xs font-medium">
+              <CircleAlert aria-hidden="true" className="size-3.5 shrink-0" />
+              {triggerLabels[failure.trigger.kind]}失败
+            </p>
+            <p className="text-foreground/90 text-[13px] wrap-anywhere">{failure.error}</p>
+          </div>
+          {failure.errorCode === 'PRECONDITION_FAILED' && (
+            <Link
+              to="/settings"
+              className="text-foreground shrink-0 text-xs leading-6 underline underline-offset-3"
+            >
+              去设置
+            </Link>
+          )}
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            aria-label="关闭提醒失败提示"
+            onClick={dismissFailure}
+          >
+            <X />
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 /** 聊天流里的提醒条目：触发原因一行，后面跟 Herald 的建议。 */

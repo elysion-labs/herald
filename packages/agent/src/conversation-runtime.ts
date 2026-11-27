@@ -305,7 +305,7 @@ export function createConversationRuntime({
       const conversation = getConversation(id);
 
       if (running.has(id)) {
-        return { delivered: false };
+        throw new ORPCError('CONFLICT', { message: '这个会话仍在运行' });
       }
 
       return exclusive(id, async () => {
@@ -314,6 +314,8 @@ export function createConversationRuntime({
         const before = manager.getLeafId();
         const sourcePlatforms = 'platform' in trigger ? [trigger.platform] : platforms();
         const unsubscribe = subscribeToReplies(session, publish);
+
+        let delivered = false;
 
         try {
           await session.sendCustomMessage(
@@ -332,32 +334,34 @@ export function createConversationRuntime({
           await session.waitForIdle();
 
           const reply = session.messages.at(-1);
+          assertReply(reply);
 
-          const text =
-            reply?.role === 'assistant'
-              ? reply.content.flatMap(part => (part.type === 'text' ? [part.text] : [])).join('')
-              : '';
-
-          if (
-            reply?.role !== 'assistant' ||
-            reply.stopReason === 'error' ||
-            /^\s*SKIP\s*$/i.test(text)
-          ) {
-            if (before) {
-              manager.branch(before);
-            } else {
-              manager.resetLeaf();
-            }
-
-            manager.appendCustomEntry('herald-reminder-skipped', { kind: trigger.kind });
-
-            return { delivered: false };
+          if (reply?.role !== 'assistant' || reply.stopReason === 'aborted') {
+            throw new ORPCError('BAD_GATEWAY', { message: '模型未完成这条提醒' });
           }
 
-          return { delivered: true };
+          const text = reply.content
+            .flatMap(part => (part.type === 'text' ? [part.text] : []))
+            .join('');
+
+          delivered = !/^\s*SKIP\s*$/i.test(text);
+
+          return { delivered };
         } finally {
-          unsubscribe();
-          session.dispose();
+          try {
+            if (!delivered) {
+              if (before) {
+                manager.branch(before);
+              } else {
+                manager.resetLeaf();
+              }
+
+              manager.appendCustomEntry('herald-reminder-skipped', { kind: trigger.kind });
+            }
+          } finally {
+            unsubscribe();
+            session.dispose();
+          }
         }
       });
     },

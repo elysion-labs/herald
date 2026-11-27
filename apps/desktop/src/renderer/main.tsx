@@ -41,15 +41,7 @@ import {
   Terminal,
   X,
 } from 'lucide-react';
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from 'react';
+import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { useDefaultLayout, usePanelRef } from 'react-resizable-panels';
 
@@ -106,7 +98,12 @@ import {
   PlatformSettings,
   WorkspaceRoomSettings,
 } from './platform-settings.tsx';
-import { ReminderItem, useLiveReminder } from './reminders.tsx';
+import {
+  ReminderFailureCard,
+  ReminderItem,
+  ReminderProvider,
+  useLiveReminder,
+} from './reminders.tsx';
 import type { LiveReminder } from './reminders.tsx';
 import { rpc } from './rpc.ts';
 import {
@@ -618,8 +615,14 @@ function HomeLayout() {
         onLayoutChanged={onLayoutChanged}
       >
         <ResizablePanel id="conversation" defaultSize="60%" minSize="360px">
-          <main className="relative h-full min-w-0">
-            <Outlet />
+          <main className="flex h-full min-w-0 flex-col">
+            <ReminderFailureCard
+              conversationId={conversation?.id}
+              isAssistant={conversation?.mode === 'assistant'}
+            />
+            <div className="relative min-h-0 flex-1">
+              <Outlet />
+            </div>
           </main>
         </ResizablePanel>
         {showDanmaku && conversation && (
@@ -1004,17 +1007,7 @@ function ChatSession({ id }: { id: string }) {
   /** 未开播时主播选择先在会话里准备，暂时收起开播遮罩。 */
   const [preparing, setPreparing] = useState(false);
 
-  const refresh = useCallback(
-    () =>
-      Promise.all([
-        queryClient.invalidateQueries({ queryKey: [...workspaceKey(workspaceId), 'history', id] }),
-        queryClient.invalidateQueries({ queryKey: usageKey(workspaceId, id) }),
-        queryClient.invalidateQueries({ queryKey: conversationsKey(workspaceId) }),
-      ]),
-    [id, queryClient, workspaceId],
-  );
-
-  const reminder = useLiveReminder(id, refresh);
+  const reminder = useLiveReminder(id);
 
   const send = useMutation({
     async mutationFn(message: ComposerMessage) {
@@ -1181,7 +1174,9 @@ function WorkspaceRoot() {
 
   return (
     <WorkspaceContext value={active}>
-      <WorkspaceShell key={active.id} switcher={switcher} />
+      <ReminderProvider key={active.id}>
+        <WorkspaceShell switcher={switcher} />
+      </ReminderProvider>
     </WorkspaceContext>
   );
 }
