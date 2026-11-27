@@ -1,15 +1,17 @@
-import type { LiveActivity, LiveViewer } from '@herald/live';
+import type { LiveActivity, LivePlatform, LiveViewer } from '@herald/live';
 
 import type { AssistantSettings, ReminderTrigger } from './settings.ts';
 
 const guardNames: Record<number, string> = { 1: '总督', 2: '提督', 3: '舰长' };
 
 /** 观众身份的一行描述，例如「舰长 · 粉丝牌 鲨鱼 21 级」。 */
-export function identityOf(viewer: LiveViewer) {
+export function identityOf(viewer: LiveViewer, platform: LivePlatform) {
+  const levelName = platform === 'bilibili' ? '荣耀等级' : '财富等级';
+
   const parts = [
     viewer.guardLevel ? guardNames[viewer.guardLevel] : undefined,
     viewer.badge ? `粉丝牌 ${viewer.badge.name} ${viewer.badge.level} 级` : undefined,
-    viewer.payLevel ? `财富 ${viewer.payLevel} 级` : undefined,
+    viewer.payLevel ? `${levelName} ${viewer.payLevel} 级` : undefined,
   ].filter(Boolean);
 
   return parts.length ? parts.join(' · ') : '普通观众';

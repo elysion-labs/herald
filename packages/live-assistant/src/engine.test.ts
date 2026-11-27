@@ -5,6 +5,7 @@ import { afterEach, expect, it, vi } from 'vite-plus/test';
 
 import { createLiveAssistant } from './engine.ts';
 import type { AssistantHost, AssistantMessage } from './engine.ts';
+import { reminderPrompt } from './prompt.ts';
 import { defaultAssistantSettings } from './settings.ts';
 
 function setup(id: string) {
@@ -80,5 +81,38 @@ it('按工作区合并定时统计，互动提醒保留事件平台', async () =
   } finally {
     combined.assistant.dispose();
     separate.assistant.dispose();
+  }
+});
+
+it.each([
+  ['bilibili', '荣耀等级'],
+  ['douyin', '财富等级'],
+] as const)('按 %s 的等级判断进场提醒并使用平台称呼', (platform, levelName) => {
+  const { assistant, events, remind } = setup('live');
+
+  try {
+    const entry = {
+      kind: 'entry',
+      platform,
+      roomId: '1',
+      key: null,
+      receivedAt: Date.now(),
+    } as const;
+
+    const viewer = { id: '42', name: '观众', badge: null, guardLevel: null };
+
+    events.emit('activity', { ...entry, viewer: { ...viewer, payLevel: null } });
+    expect(remind).not.toHaveBeenCalled();
+
+    events.emit('activity', { ...entry, viewer: { ...viewer, payLevel: 35 } });
+    const trigger = remind.mock.calls[0]?.[1];
+
+    expect(trigger).toMatchObject({ kind: 'entry', platform, identity: `${levelName} 35 级` });
+
+    if (trigger) {
+      expect(reminderPrompt(trigger, '[]')).toContain(`${levelName} 35 级`);
+    }
+  } finally {
+    assistant.dispose();
   }
 });

@@ -11,7 +11,7 @@ export interface LiveViewer {
   badge: { name: string; level: number } | null;
   /** B 站大航海：1 总督、2 提督、3 舰长。 */
   guardLevel: number | null;
-  /** 抖音财富等级。 */
+  /** B 站荣耀等级 / 抖音财富等级。 */
   payLevel: number | null;
 }
 

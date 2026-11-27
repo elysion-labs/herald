@@ -439,8 +439,8 @@ importers:
   packages/live:
     dependencies:
       '@elysionjs/blive-ws':
-        specifier: ^0.1.0
-        version: 0.1.0(electron@45.4.1)
+        specifier: 0.2.0
+        version: 0.2.0(electron@45.4.1)
       '@elysionjs/dylive-ws':
         specifier: ^0.1.1
         version: 0.1.1(electron@45.4.1)
@@ -790,8 +790,8 @@ packages:
     resolution: {integrity: sha512-3kSBtG8ObcTVfXanm5vVJ6UnBLEVmVsRk1M+vGqCuMBV+XLCbJYuWQful+yIy0GQDsSlK0kHEriEHn7SPk4EnA==}
     engines: {node: '>=22.12.0'}
 
-  '@elysionjs/blive-ws@0.1.0':
-    resolution: {integrity: sha512-JWWLYYkzVioUonBHXZYhEChu+dChJTmcfmORrniz6A0IGVM6zzW0UGZ5ayEfTOSSl10McbB1V8bSN6J4xQ4c+A==}
+  '@elysionjs/blive-ws@0.2.0':
+    resolution: {integrity: sha512-+PE/ndbSVv0G6p3YtoFPRq2viPmot5Gw+cuFg+l8Meug9MnOQ2/nIvjZUZ24yGPQN5kxY2Q27rzX4ji/G3ovCQ==}
     engines: {bun: '>=1.4.4', node: '>=24.0.0'}
     peerDependencies:
       electron: '*'
@@ -5646,7 +5646,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@elysionjs/blive-ws@0.1.0(electron@45.4.1)':
+  '@elysionjs/blive-ws@0.2.0(electron@45.4.1)':
     optionalDependencies:
       cookie: 2.0.2
       electron: 45.4.1

@@ -1,5 +1,5 @@
 import { createClient as createBilibiliClient } from '@elysionjs/blive-ws';
-import type { BiliEvent as BilibiliEvent } from '@elysionjs/blive-ws';
+import type { BiliEvent as BilibiliEvent, Medal, User } from '@elysionjs/blive-ws';
 import { parseCookie } from 'cookie';
 import { WebSocket } from 'ws';
 
@@ -95,20 +95,13 @@ async function fetchViewerProfile(
   };
 }
 
-function bilibiliViewer(
-  user: {
-    id: number;
-    name: string | null;
-    guardLevel: number | null;
-  },
-  medal?: { name: string; level: number } | null,
-): LiveViewer {
+function bilibiliViewer(user: User, medal?: Medal | null): LiveViewer {
   return {
     id: user.id > 0 ? String(user.id) : null,
     name: user.name,
     badge: medal ? { name: medal.name, level: medal.level } : null,
     guardLevel: (user.guardLevel ?? 0) > 0 ? user.guardLevel : null,
-    payLevel: null,
+    payLevel: user.wealthLevel,
   };
 }
 
@@ -135,9 +128,15 @@ function bilibiliActivity(event: BilibiliEvent): [LiveViewer, ActivityDetail] | 
     ];
   }
 
-  return event.type === 'entry'
-    ? [bilibiliViewer(event.user, event.medal), { kind: 'entry' }]
-    : undefined;
+  if (event.type === 'entry') {
+    return [bilibiliViewer(event.user, event.medal), { kind: 'entry' }];
+  }
+
+  if (event.type === 'interaction' && event.interactionType === 1) {
+    return [bilibiliViewer(event.user), { kind: 'entry' }];
+  }
+
+  return undefined;
 }
 
 function createChat({
@@ -218,7 +217,7 @@ export const bilibiliAdapter: LivePlatformAdapter = {
     viewerProfile: true,
     roomProfile: true,
     badgeLevel: true,
-    payLevel: false,
+    payLevel: true,
     welcome: true,
   },
   createChat,

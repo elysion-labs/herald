@@ -244,7 +244,7 @@ function EntrySettings({ settings: { entry }, save, platforms }: InteractionSett
   const viewerProfile = capabilityAvailability(platforms, '观众主页', 'viewerProfile');
   const entryGuard = capabilityAvailability(platforms, '进场大航海条件', 'entry', 'guard');
   const badge = capabilityAvailability(platforms, '进场粉丝牌等级条件', 'entry', 'badgeLevel');
-  const pay = capabilityAvailability(platforms, '进场财富等级条件', 'entry', 'payLevel');
+  const pay = capabilityAvailability(platforms, '进场荣耀 / 财富等级条件', 'entry', 'payLevel');
 
   return (
     <>
@@ -289,7 +289,7 @@ function EntrySettings({ settings: { entry }, save, platforms }: InteractionSett
           onCommit={minBadgeLevel => save({ entry: { ...entry, minBadgeLevel } })}
         />
       </SubField>
-      <SubField id="rule-entry-pay" label="财富等级不低于（0 关闭）" notice={pay.notice}>
+      <SubField id="rule-entry-pay" label="荣耀 / 财富等级不低于（0 关闭）" notice={pay.notice}>
         <NumberSetting
           key={entry.minPayLevel}
           id="rule-entry-pay"

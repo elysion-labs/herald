@@ -5,7 +5,7 @@
   "type": "module",
   "exports": "./src/index.ts",
   "dependencies": {
-    "@elysionjs/blive-ws": "^0.1.0",
+    "@elysionjs/blive-ws": "0.2.0",
     "@elysionjs/dylive-ws": "^0.1.1",
     "cookie": "catalog:",
     "ws": "catalog:"

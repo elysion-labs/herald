@@ -256,7 +256,7 @@ export function createLiveAssistant<Turns>(host: AssistantHost<Turns>) {
       : undefined;
   }
 
-  /** 进场分析：满足条件的观众本场第一次进场时触发。 */
+  /** 进场分析：观众在本场首次满足进场分析条件时触发。 */
   function onEntry(activity: LiveActivity, state: WorkspaceState, config: Config) {
     const viewerId = activity.viewer.id;
 
@@ -266,7 +266,6 @@ export function createLiveAssistant<Turns>(host: AssistantHost<Turns>) {
       return;
     }
 
-    state.entered.add(key);
     const facts = host.viewerFacts(activity.platform, viewerId).slice(0, 8);
     const { capabilities } = adapters[activity.platform];
 
@@ -278,12 +277,14 @@ export function createLiveAssistant<Turns>(host: AssistantHost<Turns>) {
     };
 
     if (entryQualifies(viewer, facts.length > 0, config.entry)) {
+      // 两种进场事件携带的资料可能不同，符合条件后才去重。
+      state.entered.add(key);
       fire({
         kind: 'entry',
         platform: activity.platform,
         viewerId,
         viewerName: viewer.name,
-        identity: identityOf(viewer),
+        identity: identityOf(viewer, activity.platform),
         facts,
       });
     }

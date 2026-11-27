@@ -30,7 +30,7 @@ const reasons: Reason = {
     [
       `观众 ${name(trigger.viewerName, trigger.viewerId)}（UID ${trigger.viewerId}，${trigger.identity}）刚进入直播间。`,
       `已知记忆：${trigger.facts.length ? trigger.facts.join('；') : '无'}。`,
-      '先判断现在值不值得主播主动和 TA 互动。需要时用 memory_search 查记忆，用 query_danmaku 看 TA 以前说过什么。',
+      '参考已有记忆和粉丝牌、荣耀 / 财富等级等身份信息，判断现在是否适合主动互动。需要时用 memory_search 查记忆，用 query_danmaku 看 TA 以前说过什么。',
       canViewProfile ? '也可以用 viewer_profile 看 TA 的主页资料。' : '',
       '记忆里有 TA 的【待办】时，提醒主播兑现。值得互动就给一句自然的打招呼话术并说明理由，否则只回复 SKIP。',
     ].join(''),
