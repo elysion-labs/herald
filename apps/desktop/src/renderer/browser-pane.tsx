@@ -1,8 +1,20 @@
 import type { BrowserTab } from '@herald/browser-tool';
 import { useMutation } from '@tanstack/react-query';
 import Globe from 'kubai-icons-react/icons/globe';
-import { ArrowLeft, ArrowRight, LoaderCircle, Plus, RotateCw, X } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import {
+  ArrowLeft,
+  ArrowRight,
+  GripVertical,
+  LoaderCircle,
+  Maximize2,
+  Minimize2,
+  Minus,
+  Plus,
+  RotateCw,
+  X,
+} from 'lucide-react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import type { RefObject } from 'react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -16,6 +28,7 @@ import { Input } from '@/components/ui/input';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
+import { useBrowserWindow } from './browser-window-layout.ts';
 import { kubaiMixed } from './kubai-colors.ts';
 import { rpc } from './rpc.ts';
 
@@ -27,6 +40,7 @@ interface BrowserState {
   loading: boolean;
   canGoBack: boolean;
   canGoForward: boolean;
+  pointerInside: boolean;
 }
 
 const emptyBrowser: BrowserState = {
@@ -37,11 +51,16 @@ const emptyBrowser: BrowserState = {
   loading: false,
   canGoBack: false,
   canGoForward: false,
+  pointerInside: false,
 };
 
 interface AddressDraft {
   id: string | null;
   text: string;
+}
+
+function tabLabel(tab: BrowserTab | undefined, fallback: string) {
+  return [tab?.title, tab?.url].find(Boolean) ?? fallback;
 }
 
 function BrowserTabList({
@@ -75,7 +94,7 @@ function BrowserTabList({
               aria-label="网页标签页"
             >
               {tabs.map(tab => {
-                const title = tab.title || tab.url || '新标签页';
+                const title = tabLabel(tab, '新标签页');
 
                 return (
                   <div
@@ -138,22 +157,9 @@ function BrowserTabList({
   );
 }
 
-export function BrowserPane({ onTabOpened }: { onTabOpened?: () => void }) {
-  const surface = useRef<HTMLDivElement>(null);
-  const addressInput = useRef<HTMLInputElement>(null);
+function useBrowserState(onTabOpened: () => void) {
   const [state, setState] = useState(emptyBrowser);
-  const [draft, setDraft] = useState<AddressDraft>();
   const tabOpened = useRef(onTabOpened);
-  const tabId = state.activeId;
-  const address = draft?.id === tabId ? draft.text : state.url;
-
-  const navigation = useMutation({
-    mutationFn: ({ url, tabId }: { url: string; tabId?: string; draft?: AddressDraft }) =>
-      rpc.browser.navigate({ url, tabId }),
-    onSuccess(_result, submitted) {
-      setDraft(current => (current === submitted.draft ? undefined : current));
-    },
-  });
 
   useEffect(() => {
     tabOpened.current = onTabOpened;
@@ -168,17 +174,12 @@ export function BrowserPane({ onTabOpened }: { onTabOpened?: () => void }) {
         let tabCount: number | undefined;
 
         for await (const update of updates) {
-          // 首条状态只用于同步；之后标签页变多（例如 Herald 打开网页）时让外层展开预览。
           if (tabCount !== undefined && update.tabs.length > tabCount) {
             tabOpened.current?.();
           }
 
           tabCount = update.tabs.length;
           setState(update);
-
-          if (!update.open) {
-            setDraft(undefined);
-          }
         }
       } catch (error) {
         if (!controller.signal.aborted) {
@@ -192,20 +193,39 @@ export function BrowserPane({ onTabOpened }: { onTabOpened?: () => void }) {
     return () => controller.abort();
   }, []);
 
-  useEffect(() => {
+  return state;
+}
+
+type BrowserLayout = ReturnType<typeof useBrowserWindow>;
+
+function useNativeBounds(
+  surface: RefObject<HTMLDivElement | null>,
+  enabled: boolean,
+  { x, y, width, height }: BrowserLayout['frame'],
+) {
+  const lastBounds = useRef('');
+
+  useLayoutEffect(() => {
     const node = surface.current;
 
-    if (!node) {
-      void rpc.browser.setBounds(null);
+    if (!enabled || !node) {
+      if (lastBounds.current) {
+        lastBounds.current = '';
+        void rpc.browser.setBounds(null);
+      }
 
       return;
     }
 
-    const resize = () => {
+    const sync = () => {
       const { x, y, width, height } = node.getBoundingClientRect();
 
+      const hasPortal = document.querySelector(
+        '[data-slot="dialog-content"], [data-slot="popover-content"], [data-slot="dropdown-menu-content"]',
+      );
+
       const bounds =
-        width >= 1 && height >= 1
+        width >= 1 && height >= 1 && !hasPortal
           ? {
               x: Math.round(x),
               y: Math.round(y),
@@ -214,23 +234,229 @@ export function BrowserPane({ onTabOpened }: { onTabOpened?: () => void }) {
             }
           : null;
 
-      void rpc.browser.setBounds(bounds);
+      const key = bounds ? JSON.stringify(bounds) : '';
+
+      if (key !== lastBounds.current) {
+        lastBounds.current = key;
+        void rpc.browser.setBounds(bounds);
+      }
     };
 
-    const observer = new ResizeObserver(resize);
+    const observer = new ResizeObserver(sync);
+    const portals = new MutationObserver(sync);
     observer.observe(node);
-    window.addEventListener('resize', resize);
-    resize();
+    portals.observe(document.body, { childList: true });
+    window.addEventListener('resize', sync);
+    sync();
 
     return () => {
       observer.disconnect();
-      window.removeEventListener('resize', resize);
-      void rpc.browser.setBounds(null);
+      portals.disconnect();
+      window.removeEventListener('resize', sync);
     };
-  }, []);
+  }, [enabled, surface, x, y, width, height]);
+
+  useLayoutEffect(
+    () => () => {
+      void rpc.browser.setBounds(null);
+    },
+    [],
+  );
+}
+
+export function BrowserPane({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const layout = useBrowserWindow();
+  const surface = useRef<HTMLDivElement>(null);
+
+  const state = useBrowserState(() => {
+    if (layout.mode === 'capsule') {
+      layout.setMode('pip');
+    }
+
+    onOpenChange(true);
+  });
+
+  const { frame, mode, moving } = layout;
+  const visible = open && frame.width > 0 && frame.height > 0;
+  const currentTab = state.tabs.find(tab => tab.id === state.activeId);
+  const title = tabLabel(currentTab, '浏览器');
+
+  useNativeBounds(surface, visible && mode !== 'capsule' && !moving, frame);
 
   return (
-    <aside className="browser" aria-label="网页浏览器">
+    <div ref={layout.areaRef} className="browser-float-area">
+      {visible && (
+        <aside
+          className="browser-float"
+          aria-label="网页浏览器"
+          data-mode={mode}
+          data-moving={moving}
+          data-pointer-inside={state.pointerInside}
+          style={{ left: frame.x, top: frame.y, width: frame.width, height: frame.height }}
+        >
+          <BrowserFrame
+            layout={layout}
+            state={state}
+            surface={surface}
+            title={title}
+            favicon={currentTab?.favicon}
+            onClose={() => onOpenChange(false)}
+          />
+        </aside>
+      )}
+    </div>
+  );
+}
+
+function BrowserTitle({
+  layout,
+  title,
+  favicon,
+  onClose,
+}: {
+  layout: BrowserLayout;
+  title: string;
+  favicon?: string;
+  onClose: () => void;
+}) {
+  const { mode, setMode } = layout;
+
+  return (
+    <div className="browser-title">
+      <span
+        className="browser-drag"
+        onPointerDown={event => layout.begin(event, 'move')}
+        {...layout.pointerEvents}
+      >
+        {mode !== 'expanded' && <GripVertical className="size-3.5 shrink-0" aria-hidden="true" />}
+        {favicon && <img src={favicon} alt="" referrerPolicy="no-referrer" className="size-3.5" />}
+        <span className="truncate">{title}</span>
+      </span>
+      {mode !== 'capsule' && (
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          aria-label="收起为胶囊"
+          onClick={() => setMode('capsule')}
+        >
+          <Minus />
+        </Button>
+      )}
+      <BrowserModeButton mode={mode} setMode={setMode} />
+      <Button variant="ghost" size="icon-xs" aria-label="关闭浏览器浮窗" onClick={onClose}>
+        <X />
+      </Button>
+    </div>
+  );
+}
+
+const modeActions = {
+  pip: { label: '展开浏览器', next: 'expanded', Icon: Maximize2 },
+  expanded: { label: '还原为画中画', next: 'pip', Icon: Minimize2 },
+  capsule: { label: '恢复画中画', next: 'pip', Icon: Maximize2 },
+} as const;
+
+function BrowserModeButton({ mode, setMode }: Pick<BrowserLayout, 'mode' | 'setMode'>) {
+  const { label, next, Icon } = modeActions[mode];
+
+  return (
+    <Button variant="ghost" size="icon-xs" aria-label={label} onClick={() => setMode(next)}>
+      <Icon />
+    </Button>
+  );
+}
+
+function BrowserFrame({
+  layout,
+  state,
+  surface,
+  title,
+  favicon,
+  onClose,
+}: {
+  layout: BrowserLayout;
+  state: BrowserState;
+  surface: RefObject<HTMLDivElement | null>;
+  title: string;
+  favicon?: string;
+  onClose: () => void;
+}) {
+  const { mode, moving } = layout;
+
+  const heading = (
+    <BrowserTitle layout={layout} title={title} favicon={favicon} onClose={onClose} />
+  );
+
+  if (mode === 'capsule') {
+    return heading;
+  }
+
+  return (
+    <>
+      <div className="browser-chrome">
+        {heading}
+        <BrowserControls state={state} />
+      </div>
+      <div
+        className="browser-surface"
+        id="browser-viewport"
+        role="tabpanel"
+        aria-label="当前网页"
+        ref={surface}
+      >
+        {(!state.url || moving) && (
+          <Empty className="gap-2 p-3">
+            <EmptyHeader className="gap-1">
+              <EmptyMedia className="mb-0">
+                <Globe size={26} color={kubaiMixed.globe} aria-hidden="true" />
+              </EmptyMedia>
+              <EmptyTitle className="text-sm">
+                {moving && state.url ? title : '网页预览'}
+              </EmptyTitle>
+              {!state.url && (
+                <EmptyDescription className="text-xs">输入网址打开网页</EmptyDescription>
+              )}
+            </EmptyHeader>
+          </Empty>
+        )}
+      </div>
+      {mode === 'pip' &&
+        (['nw', 'ne', 'sw', 'se'] as const).map(corner => (
+          <span
+            key={corner}
+            className="browser-resize-grip"
+            data-corner={corner}
+            aria-hidden="true"
+            onPointerDown={event => layout.begin(event, corner)}
+            {...layout.pointerEvents}
+          />
+        ))}
+    </>
+  );
+}
+
+function BrowserControls({ state }: { state: BrowserState }) {
+  const addressInput = useRef<HTMLInputElement>(null);
+  const [draft, setDraft] = useState<AddressDraft>();
+  const tabId = state.activeId;
+  const address = draft?.id === tabId ? draft.text : state.url;
+
+  const navigation = useMutation({
+    mutationFn: ({ url, tabId }: { url: string; tabId?: string; draft?: AddressDraft }) =>
+      rpc.browser.navigate({ url, tabId }),
+    onSuccess(_result, submitted) {
+      setDraft(current => (current === submitted.draft ? undefined : current));
+    },
+  });
+
+  return (
+    <>
       <div className="browser-tab-strip">
         <BrowserTabList
           tabs={state.tabs}
@@ -241,12 +467,13 @@ export function BrowserPane({ onTabOpened }: { onTabOpened?: () => void }) {
             void rpc.browser.selectTab(id);
           }}
           close={id => {
+            setDraft(undefined);
             navigation.reset();
             void rpc.browser.close(id);
           }}
         />
         <Button
-          size="icon-sm"
+          size="icon-xs"
           variant="ghost"
           aria-label="新建网页标签页"
           onClick={async () => {
@@ -262,7 +489,7 @@ export function BrowserPane({ onTabOpened }: { onTabOpened?: () => void }) {
       <div className="browser-toolbar">
         <Button
           variant="ghost"
-          size="icon-sm"
+          size="icon-xs"
           aria-label="后退"
           disabled={!state.canGoBack}
           onClick={() => void rpc.browser.back()}
@@ -271,7 +498,7 @@ export function BrowserPane({ onTabOpened }: { onTabOpened?: () => void }) {
         </Button>
         <Button
           variant="ghost"
-          size="icon-sm"
+          size="icon-xs"
           aria-label="前进"
           disabled={!state.canGoForward}
           onClick={() => void rpc.browser.forward()}
@@ -280,7 +507,7 @@ export function BrowserPane({ onTabOpened }: { onTabOpened?: () => void }) {
         </Button>
         <Button
           variant="ghost"
-          size="icon-sm"
+          size="icon-xs"
           aria-label="刷新"
           disabled={!state.open}
           onClick={() => void rpc.browser.reload()}
@@ -305,7 +532,7 @@ export function BrowserPane({ onTabOpened }: { onTabOpened?: () => void }) {
         >
           <Input
             ref={addressInput}
-            className="bg-background h-8 rounded-full border-transparent px-3.5 text-[13px]"
+            className="h-7 rounded-md px-2.5 text-xs"
             aria-label="网页地址"
             placeholder="输入网页地址"
             value={address}
@@ -319,25 +546,6 @@ export function BrowserPane({ onTabOpened }: { onTabOpened?: () => void }) {
           {navigation.error.message}
         </p>
       )}
-      <div
-        className="browser-surface"
-        id="browser-viewport"
-        role="tabpanel"
-        aria-label="当前网页"
-        ref={surface}
-      >
-        <Empty className="surface-enter">
-          <EmptyHeader>
-            <EmptyMedia>
-              <Globe size={38} color={kubaiMixed.globe} />
-            </EmptyMedia>
-            <EmptyTitle role="heading" aria-level={2}>
-              网页预览
-            </EmptyTitle>
-            <EmptyDescription>输入网址，或在聊天中让 Herald 打开网页</EmptyDescription>
-          </EmptyHeader>
-        </Empty>
-      </div>
-    </aside>
+    </>
   );
 }

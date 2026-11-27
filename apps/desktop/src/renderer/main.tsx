@@ -32,19 +32,18 @@ import Tv from 'kubai-icons-react/icons/tv';
 import {
   ArrowLeft,
   ArrowRight,
+  AppWindow,
   CircleCheck,
   CircleX,
   LoaderCircle,
   MessageSquareText,
   PanelLeft,
-  PanelRight,
   Plus,
   Terminal,
   X,
 } from 'lucide-react';
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { useDefaultLayout, usePanelRef } from 'react-resizable-panels';
 
 import { Bubble, BubbleContent } from '@/components/ui/bubble';
 import { Button } from '@/components/ui/button';
@@ -200,7 +199,7 @@ const shellContext = createContext<Shell>({
 function WorkspaceShell({ switcher }: { switcher: React.ReactNode }) {
   const client = useQueryClient();
   const [sidebarOpen, setSidebarOpen] = useStoredFlag('herald-sidebar-open', true);
-  const [browserOpen, setBrowserOpen] = useStoredFlag('herald-browser-open', true);
+  const [browserOpen, setBrowserOpen] = useStoredFlag('herald-browser-open', false);
   const [danmakuOpen, setDanmakuOpen] = useStoredFlag('herald-danmaku-open', false);
 
   const [login, setLogin] = useState<{
@@ -565,11 +564,10 @@ function Topbar() {
             size="icon-sm"
             className="text-muted-foreground hover:text-foreground"
             aria-pressed={browserOpen}
-            aria-label={browserOpen ? '收起网页预览' : '展开网页预览'}
-            title={browserOpen ? '收起网页预览' : '展开网页预览'}
+            aria-label={browserOpen ? '隐藏浏览器浮窗' : '显示浏览器浮窗'}
             onClick={() => setBrowserOpen(!browserOpen)}
           >
-            <PanelRight />
+            <AppWindow />
           </Button>
         </>
       )}
@@ -601,48 +599,12 @@ function HomeLayout() {
   const { browserOpen, setBrowserOpen, danmakuOpen, setDanmakuOpen } = useContext(shellContext);
   const conversation = useCurrentConversation();
   const showDanmaku = danmakuOpen && conversation?.mode === 'assistant';
-  const browser = usePanelRef();
-
-  const { defaultLayout, onLayoutChanged } = useDefaultLayout({
-    id: 'herald-workbench',
-    storage: localStorage,
-    onlySaveAfterUserInteractions: true,
-  });
-
   const workbench = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    const panel = browser.current;
-    const node = workbench.current;
-
-    if (!panel || !node || browserOpen !== panel.isCollapsed()) {
-      return;
-    }
-
-    // 仅按钮触发的折叠 / 展开带过渡；拖拽时不加，避免分隔条跟手迟滞。
-    node.dataset.animating = 'true';
-
-    if (browserOpen) {
-      panel.expand();
-    } else {
-      panel.collapse();
-    }
-
-    const timer = setTimeout(() => delete node.dataset.animating, 280);
-
-    return () => clearTimeout(timer);
-  }, [browser, browserOpen]);
-
   return (
-    <div ref={workbench} className="workbench h-full min-w-0 flex-1">
-      <ResizablePanelGroup
-        className="h-full"
-        orientation="horizontal"
-        id="herald-workbench"
-        defaultLayout={defaultLayout}
-        onLayoutChanged={onLayoutChanged}
-      >
-        <ResizablePanel id="conversation" defaultSize="60%" minSize="360px">
+    <div ref={workbench} className="workbench relative h-full min-w-0 flex-1">
+      <ResizablePanelGroup className="h-full" orientation="horizontal" id="herald-workbench">
+        <ResizablePanel id="conversation" minSize="300px">
           <main className="flex h-full min-w-0 flex-col">
             <ReminderFailureCard
               conversationId={conversation?.id}
@@ -656,7 +618,7 @@ function HomeLayout() {
         {showDanmaku && conversation && (
           <>
             <ResizableHandle className="workbench-divider" aria-label="调整实时弹幕宽度" />
-            <ResizablePanel id="danmaku" defaultSize="22%" minSize="240px" maxSize="40%">
+            <ResizablePanel id="danmaku" defaultSize="260px" minSize="220px" maxSize="40%">
               <DanmakuPanel
                 key={conversation.id}
                 conversationId={conversation.id}
@@ -665,25 +627,8 @@ function HomeLayout() {
             </ResizablePanel>
           </>
         )}
-        <ResizableHandle className="workbench-divider" aria-label="调整网页预览宽度" />
-        <ResizablePanel
-          id="browser"
-          panelRef={browser}
-          defaultSize="40%"
-          minSize="320px"
-          maxSize="65%"
-          collapsible
-          collapsedSize={0}
-          onResize={(size, _id, previous) => {
-            // 挂载时的首次回调和按钮触发的过渡帧都不代表用户意图，忽略；只同步拖拽导致的折叠 / 展开。
-            if (previous && !workbench.current?.dataset.animating) {
-              setBrowserOpen(size.inPixels > 0);
-            }
-          }}
-        >
-          <BrowserPane onTabOpened={() => setBrowserOpen(true)} />
-        </ResizablePanel>
       </ResizablePanelGroup>
+      <BrowserPane open={browserOpen} onOpenChange={setBrowserOpen} />
     </div>
   );
 }
@@ -1074,18 +1019,23 @@ function ChatSession({ id }: { id: string }) {
       return;
     }
 
+    const workbench = viewport.closest<HTMLElement>('.workbench');
+
     const update = () => {
-      viewport.style.setProperty(
-        '--composer-clearance',
-        `${Math.ceil(overlay.getBoundingClientRect().height) + 12}px`,
-      );
+      const clearance = `${Math.ceil(overlay.getBoundingClientRect().height) + 12}px`;
+
+      viewport.style.setProperty('--composer-clearance', clearance);
+      workbench?.style.setProperty('--workbench-composer-clearance', clearance);
     };
 
     const observer = new ResizeObserver(update);
     observer.observe(overlay);
     update();
 
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      workbench?.style.removeProperty('--workbench-composer-clearance');
+    };
   }, []);
 
   return (
