@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { EventEmitter, on } from 'node:events';
 
 import { createBrowserAgentTools } from '@herald/browser-tool';
-import { fetchRoomProfile } from '@herald/live';
+import { adapters } from '@herald/live';
 import { createLiveAssistant } from '@herald/live-assistant';
 import { assistantSettings } from '@herald/live-assistant/settings';
 import { os } from '@orpc/server';
@@ -104,8 +104,9 @@ export function createRouter(
       /** 当前绑定直播间的主播资料（平台接口）。 */
       profile: os.input(platform).handler(async ({ input, signal }) => {
         const room = workspace.rooms.status(input);
+        const adapter = adapters[input];
 
-        if (!room) {
+        if (!room || !adapter.capabilities.roomProfile) {
           return null;
         }
 
@@ -113,7 +114,7 @@ export function createRouter(
           () => null,
         );
 
-        return fetchRoomProfile(input, room.roomId, { cookie, signal });
+        return adapter.fetchRoomProfile(room.roomId, { cookie, signal });
       }),
       reconnect: os.input(platform).handler(({ input }) => {
         workspace.rooms.connect(input);
@@ -155,6 +156,9 @@ export function createRouter(
         .handler(({ input }) => workspace.memory.remove(input.scope, input.id)),
     },
     live: {
+      capabilities: os.handler(() =>
+        Object.values(adapters).map(({ id, label, capabilities }) => ({ id, label, capabilities })),
+      ),
       /** 主播手动开播：当前助手会话成为本场，并推荐话题。 */
       start: os.input(platform).handler(async ({ input }) => {
         await liveSessions.start(input);

@@ -1,3 +1,4 @@
+import { supports } from '@herald/live';
 import type { LivePlatform } from '@herald/live';
 import type { createLiveAssistant } from '@herald/live-assistant';
 
@@ -40,7 +41,7 @@ export function createLiveSessions(workspace: Workspace, assistant: Assistant) {
     ending.add(platform);
 
     try {
-      if (workspace.settings.assistant().liveEnd.enabled) {
+      if (workspace.settings.assistant().liveEnd.enabled && supports([platform], 'danmaku')) {
         await assistant.run(current.id, {
           kind: 'liveEnd',
           startedAt: current.liveStartedAt,

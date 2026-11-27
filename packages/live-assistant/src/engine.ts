@@ -1,13 +1,12 @@
 import { EventEmitter, on } from 'node:events';
 
+import { adapters } from '@herald/live';
 import type { LiveActivity, LivePlatform } from '@herald/live';
 
 import { createHeatState, heatTrigger, recordHeat, resetHeat } from './heat.ts';
 import type { HeatState } from './heat.ts';
 import { entryQualifies, giftTrigger, identityOf } from './interactions.ts';
 import type { AssistantSettings, ReminderTrigger } from './settings.ts';
-
-const platforms = ['bilibili', 'douyin'] as const satisfies readonly LivePlatform[];
 
 /** 调度需要的弹幕字段。 */
 export interface AssistantMessage {
@@ -79,7 +78,7 @@ export function createLiveAssistant<Turns>(host: AssistantHost<Turns>) {
   events.setMaxListeners(0);
 
   const states = new Map<LivePlatform, PlatformState>(
-    platforms.map(platform => [
+    Object.values(adapters).map(({ id: platform }) => [
       platform,
       {
         quietSince: Date.now(),
@@ -184,7 +183,7 @@ export function createLiveAssistant<Turns>(host: AssistantHost<Turns>) {
   function onMessage(message: AssistantMessage) {
     const state = states.get(message.platform);
 
-    if (!state) {
+    if (!state || !adapters[message.platform].capabilities.danmaku) {
       return;
     }
 
@@ -242,6 +241,7 @@ export function createLiveAssistant<Turns>(host: AssistantHost<Turns>) {
 
     const fresh =
       config.welcome.enabled &&
+      adapters[message.platform].capabilities.welcome &&
       host.roomLive(message.platform) === 'live' &&
       !host.viewerFacts(message.platform, viewerId).length &&
       !host.viewerSeenBefore(message.platform, viewerId);
@@ -261,13 +261,21 @@ export function createLiveAssistant<Turns>(host: AssistantHost<Turns>) {
 
     state.entered.add(viewerId);
     const facts = host.viewerFacts(activity.platform, viewerId).slice(0, 8);
+    const { capabilities } = adapters[activity.platform];
 
-    if (entryQualifies(activity.viewer, facts.length > 0, config.entry)) {
+    const viewer = {
+      ...activity.viewer,
+      guardLevel: capabilities.guard ? activity.viewer.guardLevel : null,
+      badge: capabilities.badgeLevel ? activity.viewer.badge : null,
+      payLevel: capabilities.payLevel ? activity.viewer.payLevel : null,
+    };
+
+    if (entryQualifies(viewer, facts.length > 0, config.entry)) {
       fire(activity.platform, {
         kind: 'entry',
         viewerId,
-        viewerName: activity.viewer.name,
-        identity: identityOf(activity.viewer),
+        viewerName: viewer.name,
+        identity: identityOf(viewer),
         facts,
       });
     }
@@ -275,15 +283,21 @@ export function createLiveAssistant<Turns>(host: AssistantHost<Turns>) {
 
   /** 互动事件只在已开播的场次里处理。 */
   function onActivity(activity: LiveActivity) {
-    const state = states.get(activity.platform);
+    const { kind, platform } = activity;
 
-    if (!state || !target(activity.platform) || host.roomLive(activity.platform) !== 'live') {
+    if (kind === 'follow' || !adapters[platform].capabilities[kind]) {
+      return;
+    }
+
+    const state = states.get(platform);
+
+    if (!state || !target(platform) || host.roomLive(platform) !== 'live') {
       return;
     }
 
     const config = host.settings();
 
-    if (activity.kind === 'entry') {
+    if (kind === 'entry') {
       onEntry(activity, state, config);
 
       return;
@@ -292,12 +306,11 @@ export function createLiveAssistant<Turns>(host: AssistantHost<Turns>) {
     const trigger = giftTrigger(activity, config.gifts);
 
     if (trigger) {
-      fire(activity.platform, trigger, true);
+      fire(platform, trigger, true);
     }
   }
 
-  /** 冷场提醒：只在确认直播中时计时；刚开播时从开播时刻重新计时。 */
-  function checkSilence(platform: LivePlatform, state: PlatformState, config: Config, now: number) {
+  function updateLiveState(platform: LivePlatform, state: PlatformState, now: number) {
     const live = host.roomLive(platform) === 'live';
 
     if (live && !state.live) {
@@ -309,10 +322,14 @@ export function createLiveAssistant<Turns>(host: AssistantHost<Turns>) {
     }
 
     state.live = live;
+  }
+
+  /** 冷场提醒：只在确认直播中时计时；刚开播时从开播时刻重新计时。 */
+  function checkSilence(platform: LivePlatform, state: PlatformState, config: Config, now: number) {
     const quiet = now - state.quietSince;
 
     if (
-      live &&
+      state.live &&
       config.silence.enabled &&
       !state.silenceFired &&
       quiet >= config.silence.seconds * 1000
@@ -361,6 +378,12 @@ export function createLiveAssistant<Turns>(host: AssistantHost<Turns>) {
 
       if (state.pending && !host.isRunning(conversationId) && !typing(conversationId)) {
         fire(platform, state.pending);
+        continue;
+      }
+
+      updateLiveState(platform, state, now);
+
+      if (!adapters[platform].capabilities.danmaku) {
         continue;
       }
 

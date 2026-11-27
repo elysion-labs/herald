@@ -1,3 +1,4 @@
+import type { LiveCapability, LivePlatformInfo } from '@herald/live';
 import type { AssistantSettings } from '@herald/live-assistant/settings';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
@@ -10,6 +11,41 @@ import { Switch } from '@/components/ui/switch';
 import { rpc } from './rpc.ts';
 
 const queryKey = ['assistant-settings'];
+
+const capabilitiesQuery = {
+  queryKey: ['live-capabilities'],
+  queryFn: () => rpc.live.capabilities(),
+  staleTime: Infinity,
+};
+
+interface Availability {
+  disabled: boolean;
+  notice?: string;
+}
+
+function platformAvailability(
+  platforms: readonly LivePlatformInfo[],
+  feature: string,
+  supported: (capabilities: LivePlatformInfo['capabilities']) => boolean,
+): Availability {
+  const unsupported = platforms.filter(({ capabilities }) => !supported(capabilities));
+  const names = unsupported.map(({ label }) => label).join('、');
+
+  return {
+    disabled: unsupported.length === platforms.length,
+    notice: names ? `${names}暂不支持${feature}。` : undefined,
+  };
+}
+
+function capabilityAvailability(
+  platforms: readonly LivePlatformInfo[],
+  feature: string,
+  ...required: LiveCapability[]
+) {
+  return platformAvailability(platforms, feature, capabilities =>
+    required.every(capability => capabilities[capability]),
+  );
+}
 
 function useAssistantSettings() {
   const client = useQueryClient();
@@ -26,6 +62,7 @@ function useAssistantSettings() {
 /** 失焦时提交的数字输入；非法值回退为当前值。 */
 function NumberSetting({
   id,
+  descriptionId,
   value,
   min,
   max,
@@ -34,6 +71,7 @@ function NumberSetting({
   step = 1,
 }: {
   id: string;
+  descriptionId?: string;
   value: number;
   min: number;
   max: number;
@@ -47,6 +85,7 @@ function NumberSetting({
   return (
     <Input
       id={id}
+      aria-describedby={descriptionId}
       type="number"
       inputMode={step < 1 ? 'decimal' : 'numeric'}
       step={step}
@@ -77,6 +116,7 @@ function RuleRow({
   description,
   checked,
   onCheckedChange,
+  availability,
   children,
 }: {
   id: string;
@@ -84,14 +124,24 @@ function RuleRow({
   description: string;
   checked: boolean;
   onCheckedChange: (checked: boolean) => void;
+  availability?: Availability;
   children?: React.ReactNode;
 }) {
   return (
-    <Field orientation="horizontal">
-      <Switch id={id} checked={checked} onCheckedChange={onCheckedChange} />
+    <Field orientation="horizontal" data-disabled={availability?.disabled}>
+      <Switch
+        id={id}
+        checked={checked && !availability?.disabled}
+        disabled={availability?.disabled}
+        aria-describedby={`${id}-description`}
+        onCheckedChange={onCheckedChange}
+      />
       <FieldContent>
         <FieldLabel htmlFor={id}>{label}</FieldLabel>
-        <FieldDescription>{description}</FieldDescription>
+        <FieldDescription id={`${id}-description`}>
+          {description}
+          {availability?.notice ? ` ${availability.notice}` : ''}
+        </FieldDescription>
       </FieldContent>
       {children}
     </Field>
@@ -105,120 +155,165 @@ type Save = (input: Partial<Settings>) => void;
 function SubField({
   id,
   label,
+  notice,
   children,
 }: {
   id: string;
   label: string;
+  notice?: string;
   children: React.ReactNode;
 }) {
   return (
     <div className="flex items-center justify-between gap-4 pl-11">
-      <label htmlFor={id} className="text-muted-foreground text-sm">
-        {label}
-      </label>
+      <div className="text-muted-foreground flex flex-col gap-1 text-sm">
+        <label htmlFor={id}>{label}</label>
+        {notice && <FieldDescription id={`${id}-capability`}>{notice}</FieldDescription>}
+      </div>
       {children}
     </div>
   );
 }
 
-function InteractionSettings({ settings, save }: { settings: Settings; save: Save }) {
-  const { gifts, entry, welcome } = settings;
+interface InteractionSettingsProps {
+  settings: Settings;
+  save: Save;
+  platforms: readonly LivePlatformInfo[];
+}
+
+function GiftSettings({ settings: { gifts }, save, platforms }: InteractionSettingsProps) {
+  const thanks = platformAvailability(
+    platforms,
+    '礼物答谢',
+    caps => caps.gift || caps.superChat || caps.guard,
+  );
+
+  const gift = capabilityAvailability(platforms, '礼物事件', 'gift');
+  const superChat = capabilityAvailability(platforms, '醒目留言', 'superChat');
+  const guard = capabilityAvailability(platforms, '上舰事件', 'guard');
 
   return (
     <>
       <RuleRow
         id="rule-gifts"
         label="礼物答谢"
-        description="礼物达到金额（元）、醒目留言或上舰时，马上给出答谢话术，不受提醒间隔限制"
+        description="礼物达到金额、收到醒目留言或上舰时，马上给出答谢话术，不受提醒间隔限制"
+        availability={thanks}
         checked={gifts.enabled}
         onCheckedChange={enabled => save({ gifts: { ...gifts, enabled } })}
-      >
+      />
+      <SubField id="rule-gifts-min" label="礼物最低金额（元）" notice={gift.notice}>
         <NumberSetting
           key={gifts.minValue}
           id="rule-gifts-min"
+          descriptionId={gift.notice ? 'rule-gifts-min-capability' : undefined}
           value={gifts.minValue}
           min={0}
           max={100_000}
           step={0.1}
-          disabled={!gifts.enabled}
+          disabled={!gifts.enabled || gift.disabled}
           onCommit={minValue => save({ gifts: { ...gifts, minValue } })}
         />
-      </RuleRow>
-      <SubField id="rule-gifts-sc" label="醒目留言">
+      </SubField>
+      <SubField id="rule-gifts-sc" label="醒目留言" notice={superChat.notice}>
         <Switch
           id="rule-gifts-sc"
-          checked={gifts.superChat}
-          disabled={!gifts.enabled}
+          checked={gifts.superChat && !superChat.disabled}
+          disabled={!gifts.enabled || superChat.disabled}
+          aria-describedby={superChat.notice ? 'rule-gifts-sc-capability' : undefined}
           onCheckedChange={superChat => save({ gifts: { ...gifts, superChat } })}
         />
       </SubField>
-      <SubField id="rule-gifts-guard" label="上舰 / 开通大航海">
+      <SubField id="rule-gifts-guard" label="上舰 / 开通大航海" notice={guard.notice}>
         <Switch
           id="rule-gifts-guard"
-          checked={gifts.guard}
-          disabled={!gifts.enabled}
+          checked={gifts.guard && !guard.disabled}
+          disabled={!gifts.enabled || guard.disabled}
+          aria-describedby={guard.notice ? 'rule-gifts-guard-capability' : undefined}
           onCheckedChange={guard => save({ gifts: { ...gifts, guard } })}
         />
       </SubField>
+    </>
+  );
+}
+
+function EntrySettings({ settings: { entry }, save, platforms }: InteractionSettingsProps) {
+  const entryEvent = capabilityAvailability(platforms, '进场事件', 'entry');
+  const viewerProfile = capabilityAvailability(platforms, '观众主页', 'viewerProfile');
+  const entryGuard = capabilityAvailability(platforms, '进场大航海条件', 'entry', 'guard');
+  const badge = capabilityAvailability(platforms, '进场粉丝牌等级条件', 'entry', 'badgeLevel');
+  const pay = capabilityAvailability(platforms, '进场财富等级条件', 'entry', 'payLevel');
+
+  return (
+    <>
       <RuleRow
         id="rule-entry"
         label="进场分析"
-        description="满足任一条件的观众进场时，结合记忆和主页资料判断是否值得互动；同一观众每场一次"
+        description={`满足任一条件的观众进场时，结合记忆、弹幕和可用的主页资料判断是否值得互动。同一观众每场一次。${viewerProfile.notice ?? ''}`}
+        availability={entryEvent}
         checked={entry.enabled}
         onCheckedChange={enabled => save({ entry: { ...entry, enabled } })}
       />
       <SubField id="rule-entry-memory" label="有记忆的观众">
         <Switch
           id="rule-entry-memory"
-          checked={entry.withMemory}
-          disabled={!entry.enabled}
+          checked={entry.withMemory && !entryEvent.disabled}
+          disabled={!entry.enabled || entryEvent.disabled}
           onCheckedChange={withMemory => save({ entry: { ...entry, withMemory } })}
         />
       </SubField>
-      <SubField id="rule-entry-guard" label="大航海成员（B 站）">
+      <SubField id="rule-entry-guard" label="大航海成员" notice={entryGuard.notice}>
         <Switch
           id="rule-entry-guard"
-          checked={entry.guard}
-          disabled={!entry.enabled}
+          checked={entry.guard && !entryGuard.disabled}
+          disabled={!entry.enabled || entryGuard.disabled}
+          aria-describedby={entryGuard.notice ? 'rule-entry-guard-capability' : undefined}
           onCheckedChange={guard => save({ entry: { ...entry, guard } })}
         />
       </SubField>
-      <SubField id="rule-entry-badge" label="粉丝牌 / 粉丝团等级不低于（0 关闭）">
+      <SubField
+        id="rule-entry-badge"
+        label="粉丝牌 / 粉丝团等级不低于（0 关闭）"
+        notice={badge.notice}
+      >
         <NumberSetting
           key={entry.minBadgeLevel}
           id="rule-entry-badge"
+          descriptionId={badge.notice ? 'rule-entry-badge-capability' : undefined}
           value={entry.minBadgeLevel}
           min={0}
           max={40}
-          disabled={!entry.enabled}
+          disabled={!entry.enabled || badge.disabled}
           onCommit={minBadgeLevel => save({ entry: { ...entry, minBadgeLevel } })}
         />
       </SubField>
-      <SubField id="rule-entry-pay" label="抖音财富等级不低于（0 关闭）">
+      <SubField id="rule-entry-pay" label="财富等级不低于（0 关闭）" notice={pay.notice}>
         <NumberSetting
           key={entry.minPayLevel}
           id="rule-entry-pay"
+          descriptionId={pay.notice ? 'rule-entry-pay-capability' : undefined}
           value={entry.minPayLevel}
           min={0}
           max={80}
-          disabled={!entry.enabled}
+          disabled={!entry.enabled || pay.disabled}
           onCommit={minPayLevel => save({ entry: { ...entry, minPayLevel } })}
         />
       </SubField>
-      <RuleRow
-        id="rule-welcome"
-        label="新观众欢迎"
-        description="之前没有弹幕和记忆的观众第一次发言时，给出欢迎并接住话题的回应"
-        checked={welcome.enabled}
-        onCheckedChange={enabled => save({ welcome: { enabled } })}
-      />
     </>
   );
 }
 
-function HeatSettings({ settings, save }: { settings: Settings; save: Save }) {
+function HeatSettings({
+  settings,
+  save,
+  availability,
+}: {
+  settings: Settings;
+  save: Save;
+  availability: Availability;
+}) {
   const { heat } = settings;
   const update = (input: Partial<Settings['heat']>) => save({ heat: { ...heat, ...input } });
+  const disabled = !heat.enabled || availability.disabled;
 
   return (
     <>
@@ -226,6 +321,7 @@ function HeatSettings({ settings, save }: { settings: Settings; save: Save }) {
         id="rule-heat"
         label="热度变化"
         description="刚结束的一分钟弹幕量相对之前平均值突增或下滑时，提醒顺势展开或提前换话题"
+        availability={availability}
         checked={heat.enabled}
         onCheckedChange={enabled => update({ enabled })}
       />
@@ -236,7 +332,7 @@ function HeatSettings({ settings, save }: { settings: Settings; save: Save }) {
           value={heat.windowMinutes}
           min={3}
           max={30}
-          disabled={!heat.enabled}
+          disabled={disabled}
           onCommit={windowMinutes => update({ windowMinutes })}
         />
       </SubField>
@@ -248,7 +344,7 @@ function HeatSettings({ settings, save }: { settings: Settings; save: Save }) {
           min={1.2}
           max={10}
           step={0.1}
-          disabled={!heat.enabled}
+          disabled={disabled}
           onCommit={spikeRatio => update({ spikeRatio })}
         />
       </SubField>
@@ -260,7 +356,7 @@ function HeatSettings({ settings, save }: { settings: Settings; save: Save }) {
           min={0}
           max={0.9}
           step={0.05}
-          disabled={!heat.enabled}
+          disabled={disabled}
           onCommit={dropRatio => update({ dropRatio })}
         />
       </SubField>
@@ -271,7 +367,7 @@ function HeatSettings({ settings, save }: { settings: Settings; save: Save }) {
           value={heat.minPerMinute}
           min={1}
           max={1000}
-          disabled={!heat.enabled}
+          disabled={disabled}
           onCommit={minPerMinute => update({ minPerMinute })}
         />
       </SubField>
@@ -282,7 +378,7 @@ function HeatSettings({ settings, save }: { settings: Settings; save: Save }) {
           value={heat.cooldownMinutes}
           min={1}
           max={60}
-          disabled={!heat.enabled}
+          disabled={disabled}
           onCommit={cooldownMinutes => update({ cooldownMinutes })}
         />
       </SubField>
@@ -292,17 +388,39 @@ function HeatSettings({ settings, save }: { settings: Settings; save: Save }) {
 
 export function AssistantSettingsPanel() {
   const { query, save } = useAssistantSettings();
+  const capabilities = useQuery(capabilitiesQuery);
   const settings = query.data;
+  const platforms = capabilities.data;
+  const error = query.error ?? capabilities.error;
 
-  if (!settings) {
+  if (!settings || !platforms) {
     return (
-      <p role={query.isError ? 'alert' : 'status'} className="text-muted-foreground text-sm">
-        {query.error?.message ?? '正在加载…'}
+      <p role={error ? 'alert' : 'status'} className="text-muted-foreground text-sm">
+        {error?.message ?? '正在加载…'}
       </p>
     );
   }
 
-  const { silence, memoryViewers, keywords, periodic, liveStart, liveEnd } = settings;
+  return (
+    <AssistantSettingsCard
+      settings={settings}
+      save={save.mutate}
+      platforms={platforms}
+      error={save.error}
+    />
+  );
+}
+
+function AssistantSettingsCard({
+  settings,
+  save,
+  platforms,
+  error,
+}: InteractionSettingsProps & { error: Error | null }) {
+  const { silence, memoryViewers, keywords, periodic, liveStart, liveEnd, welcome } = settings;
+  const danmaku = capabilityAvailability(platforms, '弹幕', 'danmaku');
+  const welcomeEvent = capabilityAvailability(platforms, '新观众欢迎', 'danmaku', 'welcome');
+  const interactionProps = { settings, save, platforms };
 
   return (
     <Card>
@@ -318,23 +436,34 @@ export function AssistantSettingsPanel() {
           label="开播话题推荐"
           description="点击「开播」后结合记忆、待办、历史场次和平台热门，推荐本场可以聊的话题"
           checked={liveStart.enabled}
-          onCheckedChange={enabled => save.mutate({ liveStart: { enabled } })}
+          onCheckedChange={enabled => save({ liveStart: { enabled } })}
         />
         <RuleRow
           id="rule-live-end"
           label="下播复盘"
           description="点击「下播」后总结本场弹幕走势、活跃观众、亮点和待办，并给下一场建议；之后本场转为普通会话"
+          availability={danmaku}
           checked={liveEnd.enabled}
-          onCheckedChange={enabled => save.mutate({ liveEnd: { enabled } })}
+          onCheckedChange={enabled => save({ liveEnd: { enabled } })}
         />
-        <InteractionSettings settings={settings} save={input => save.mutate(input)} />
-        <HeatSettings settings={settings} save={input => save.mutate(input)} />
+        <GiftSettings {...interactionProps} />
+        <EntrySettings {...interactionProps} />
+        <RuleRow
+          id="rule-welcome"
+          label="新观众欢迎"
+          description="之前没有弹幕和记忆的观众第一次发言时，给出欢迎并接住话题的回应"
+          availability={welcomeEvent}
+          checked={welcome.enabled}
+          onCheckedChange={enabled => save({ welcome: { enabled } })}
+        />
+        <HeatSettings settings={settings} save={save} availability={danmaku} />
         <RuleRow
           id="rule-silence"
           label="冷场提醒"
           description="直播中连续一段时间没有新弹幕时，给出接话或暖场的建议；未开播时不提醒（秒）"
+          availability={danmaku}
           checked={silence.enabled}
-          onCheckedChange={enabled => save.mutate({ silence: { ...silence, enabled } })}
+          onCheckedChange={enabled => save({ silence: { ...silence, enabled } })}
         >
           <NumberSetting
             key={silence.seconds}
@@ -342,16 +471,17 @@ export function AssistantSettingsPanel() {
             value={silence.seconds}
             min={30}
             max={1800}
-            disabled={!silence.enabled}
-            onCommit={seconds => save.mutate({ silence: { ...silence, seconds } })}
+            disabled={!silence.enabled || danmaku.disabled}
+            onCommit={seconds => save({ silence: { ...silence, seconds } })}
           />
         </RuleRow>
         <RuleRow
           id="rule-viewers"
           label="记忆观众发言"
           description="有记忆的观众发弹幕时，提醒主播并给出回应建议（同一观众的提醒间隔，分钟）"
+          availability={danmaku}
           checked={memoryViewers.enabled}
-          onCheckedChange={enabled => save.mutate({ memoryViewers: { ...memoryViewers, enabled } })}
+          onCheckedChange={enabled => save({ memoryViewers: { ...memoryViewers, enabled } })}
         >
           <NumberSetting
             key={memoryViewers.cooldownMinutes}
@@ -359,9 +489,9 @@ export function AssistantSettingsPanel() {
             value={memoryViewers.cooldownMinutes}
             min={1}
             max={240}
-            disabled={!memoryViewers.enabled}
+            disabled={!memoryViewers.enabled || danmaku.disabled}
             onCommit={cooldownMinutes =>
-              save.mutate({ memoryViewers: { ...memoryViewers, cooldownMinutes } })
+              save({ memoryViewers: { ...memoryViewers, cooldownMinutes } })
             }
           />
         </RuleRow>
@@ -369,14 +499,15 @@ export function AssistantSettingsPanel() {
           id="rule-keywords"
           label="关注词"
           description="弹幕包含下列词语时提醒，用逗号分隔"
+          availability={danmaku}
           checked={keywords.enabled}
-          onCheckedChange={enabled => save.mutate({ keywords: { ...keywords, enabled } })}
+          onCheckedChange={enabled => save({ keywords: { ...keywords, enabled } })}
         />
         <Input
           key={keywords.words.join(',')}
           aria-label="关注词"
           placeholder="例如：抽奖，上舰，下播"
-          disabled={!keywords.enabled}
+          disabled={!keywords.enabled || danmaku.disabled}
           defaultValue={keywords.words.join('，')}
           onBlur={event => {
             const words = [
@@ -388,15 +519,16 @@ export function AssistantSettingsPanel() {
               ),
             ].slice(0, 50);
 
-            save.mutate({ keywords: { ...keywords, words } });
+            save({ keywords: { ...keywords, words } });
           }}
         />
         <RuleRow
           id="rule-periodic"
           label="定时分析"
           description="每隔一段时间总结弹幕关注点并给出建议（分钟）"
+          availability={danmaku}
           checked={periodic.enabled}
-          onCheckedChange={enabled => save.mutate({ periodic: { ...periodic, enabled } })}
+          onCheckedChange={enabled => save({ periodic: { ...periodic, enabled } })}
         >
           <NumberSetting
             key={periodic.minutes}
@@ -404,8 +536,8 @@ export function AssistantSettingsPanel() {
             value={periodic.minutes}
             min={1}
             max={60}
-            disabled={!periodic.enabled}
-            onCommit={minutes => save.mutate({ periodic: { ...periodic, minutes } })}
+            disabled={!periodic.enabled || danmaku.disabled}
+            onCommit={minutes => save({ periodic: { ...periodic, minutes } })}
           />
         </RuleRow>
         <Field orientation="horizontal">
@@ -419,8 +551,8 @@ export function AssistantSettingsPanel() {
             value={periodic.minMessages}
             min={1}
             max={500}
-            disabled={!periodic.enabled}
-            onCommit={minMessages => save.mutate({ periodic: { ...periodic, minMessages } })}
+            disabled={!periodic.enabled || danmaku.disabled}
+            onCommit={minMessages => save({ periodic: { ...periodic, minMessages } })}
           />
         </Field>
         <Field orientation="horizontal">
@@ -434,12 +566,12 @@ export function AssistantSettingsPanel() {
             value={settings.cooldownSeconds}
             min={15}
             max={3600}
-            onCommit={cooldownSeconds => save.mutate({ cooldownSeconds })}
+            onCommit={cooldownSeconds => save({ cooldownSeconds })}
           />
         </Field>
-        {save.isError && (
+        {error && (
           <p role="alert" className="text-destructive text-sm">
-            {save.error.message}
+            {error.message}
           </p>
         )}
       </CardContent>

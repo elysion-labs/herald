@@ -4,6 +4,7 @@ import { join } from 'node:path';
 
 import { createLiveAgent, createSessionStore } from '@herald/agent';
 import { createDanmakuTool, freshDanmaku, openDanmakuStore } from '@herald/danmaku';
+import { supports } from '@herald/live';
 import type { LivePlatform } from '@herald/live';
 import { reminderPrompt } from '@herald/live-assistant';
 import { liveTime, reminderTrigger } from '@herald/live-assistant/settings';
@@ -25,7 +26,7 @@ import { openAppSettings } from './app-settings.ts';
 import { openDatabase, schema } from './db/index.ts';
 import { openLiveRooms } from './live-rooms.ts';
 import { openModelSettings } from './model-settings.ts';
-import { createViewerProfileTool } from './viewer-tool.ts';
+import { createViewerProfileTools } from './viewer-tool.ts';
 
 type Conversation = typeof schema.conversations.$inferSelect;
 
@@ -414,7 +415,7 @@ export function openWorkspace(directory: string) {
         ...(tools ?? []),
         ...memoryTools,
         createDanmakuTool(danmaku, conversation.platform),
-        createViewerProfileTool(conversation.platform),
+        ...createViewerProfileTools(conversation.platform),
       ],
       onTitle: canRename(conversation) ? title => rename(title, conversation.id) : undefined,
       // 普通会话可以跨平台读取历史会话。
@@ -646,7 +647,14 @@ export function openWorkspace(directory: string) {
             {
               customType: reminderType,
               display: true,
-              content: reminderPrompt(trigger, takeDanmaku(conversation)?.text ?? '[]'),
+              content: reminderPrompt(
+                trigger,
+                takeDanmaku(conversation)?.text ?? '[]',
+                supports(
+                  conversation.platform ? [conversation.platform] : platforms,
+                  'viewerProfile',
+                ),
+              ),
               details: trigger,
             },
             { triggerTurn: true },

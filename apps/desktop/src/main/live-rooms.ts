@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { EventEmitter, on } from 'node:events';
 
-import { createLiveChat } from '@herald/live';
-import type { LiveActivity, LiveChatMessage, LivePlatform } from '@herald/live';
+import { adapters } from '@herald/live';
+import type { LiveActivity, LiveChat, LiveChatMessage, LivePlatform } from '@herald/live';
 import { ORPCError } from '@orpc/server';
 import { eq } from 'drizzle-orm';
 
@@ -13,7 +13,7 @@ import type { Database } from './db/index.ts';
 import { readLiveCookies } from './platform-accounts.ts';
 
 interface RoomConnection {
-  client?: ReturnType<typeof createLiveChat>;
+  client?: LiveChat;
   error?: string;
   received: number;
   recent: LiveMessage[];
@@ -100,8 +100,7 @@ export function openLiveRooms(db: Database) {
     connections.set(platform, connection);
 
     try {
-      const client = createLiveChat({
-        platform,
+      const client = adapters[platform].createChat({
         roomId,
         readCookie: signal => readLiveCookies(platform, signal),
         onError(error) {
