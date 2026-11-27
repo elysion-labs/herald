@@ -111,12 +111,12 @@ function moveFrame(gesture: Gesture, dx: number, dy: number, area: Size): Frame 
   return { x: left ? fixedX - width : fixedX, y: top ? fixedY - height : fixedY, width, height };
 }
 
-function anchor(offset: number, travel: number, previous: number) {
+function anchor(offset: number, travel: number, previous: number, snap: boolean) {
   if (travel <= 0) {
     return previous;
   }
 
-  if (Math.min(offset, travel - offset) <= snapDistance) {
+  if (snap && Math.min(offset, travel - offset) <= snapDistance) {
     return offset < travel / 2 ? 0 : 1;
   }
 
@@ -202,11 +202,12 @@ export function useBrowserWindow() {
 
     if (!cancelled && active.original !== active.frame) {
       const { x, y, width, height } = active.frame;
+      const moved = active.kind === 'move';
       save({
         ...layout,
-        width: active.kind === 'move' ? layout.width : width,
-        x: anchor(x, area.width - width, layout.x),
-        y: anchor(y, area.height - height, layout.y),
+        width: moved ? layout.width : width,
+        x: anchor(x, area.width - width, layout.x, moved),
+        y: anchor(y, area.height - height, layout.y, moved),
       });
     }
   }

@@ -348,10 +348,18 @@ export function createRouter(
       setBounds: os
         .input(
           z
-            .object({ x: coordinate, y: coordinate, width: dimension, height: dimension })
+            .object({
+              frame: z.object({
+                x: coordinate,
+                y: coordinate,
+                width: dimension,
+                height: dimension,
+              }),
+              pictureInPicture: z.boolean(),
+            })
             .nullable(),
         )
-        .handler(({ input }) => browser.setBounds(input ?? undefined)),
+        .handler(({ input }) => browser.setBounds(input?.frame, input?.pictureInPicture ?? false)),
       back: os.handler(() => browser.back()),
       forward: os.handler(() => browser.forward()),
       reload: os.handler(() => browser.reload()),

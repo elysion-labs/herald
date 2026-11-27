@@ -3,7 +3,7 @@ import { EventEmitter, on } from 'node:events';
 import { isIP } from 'node:net';
 
 import type { BrowserContents, BrowserInteraction } from '@herald/browser-tool';
-import { nativeImage, session, WebContentsView } from 'electron';
+import { nativeImage, screen, session, WebContentsView } from 'electron';
 import type { BrowserWindow, Rectangle, WebContents } from 'electron';
 
 import { browserViewport } from '../shared/browser-preview.ts';
@@ -96,6 +96,7 @@ export function createWorkspaceBrowser(window: BrowserWindow) {
   let activeId: string | null = null;
   let bounds: Rectangle | undefined;
   let pointerInside = false;
+  let pointerTimer: ReturnType<typeof setInterval> | undefined;
 
   function lookup(id?: string) {
     if (id !== undefined) {
@@ -146,6 +147,37 @@ export function createWorkspaceBrowser(window: BrowserWindow) {
       pointerInside = next;
       changed();
     }
+  }
+
+  function checkPointer() {
+    const view = lookup();
+
+    if (!window.isFocused() || !view?.getVisible()) {
+      setPointerInside(false);
+
+      return;
+    }
+
+    const cursor = screen.getCursorScreenPoint();
+    const origin = window.getContentBounds();
+    const frame = view.getBounds();
+    const x = cursor.x - origin.x - frame.x;
+    const y = cursor.y - origin.y - frame.y;
+    setPointerInside(x >= 0 && y >= 0 && x < frame.width && y < frame.height);
+  }
+
+  function trackPointer(enabled: boolean) {
+    if (enabled) {
+      // 原生视图的位置可能在鼠标静止时改变，移入和移出事件无法覆盖这种情况。
+      pointerTimer ??= setInterval(checkPointer, 80);
+      checkPointer();
+
+      return;
+    }
+
+    clearInterval(pointerTimer);
+    pointerTimer = undefined;
+    setPointerInside(false);
   }
 
   function fitView(view: WebContentsView, frame: Rectangle) {
@@ -263,11 +295,6 @@ export function createWorkspaceBrowser(window: BrowserWindow) {
     tabs.set(id, view);
 
     const contents = view.webContents;
-    contents.on('before-mouse-event', (_event, mouse) => {
-      if (id === activeId && view.getVisible()) {
-        setPointerInside(mouse.type !== 'mouseLeave');
-      }
-    });
     contents.on('will-frame-navigate', event => {
       if (event.isMainFrame && !isWebUrl(event.url)) {
         event.preventDefault();
@@ -447,9 +474,10 @@ export function createWorkspaceBrowser(window: BrowserWindow) {
   };
 
   window.on('resize', syncBounds);
-  window.webContents.on('before-mouse-event', () => setPointerInside(false));
   window.on('blur', () => setPointerInside(false));
   window.on('closed', () => {
+    trackPointer(false);
+
     for (const id of tabs.keys()) {
       close(id);
     }
@@ -478,9 +506,10 @@ export function createWorkspaceBrowser(window: BrowserWindow) {
         await updates.return?.();
       }
     },
-    setBounds(next: Rectangle | undefined) {
+    setBounds(next: Rectangle | undefined, pictureInPicture: boolean) {
       bounds = next;
       syncBounds();
+      trackPointer(Boolean(next && pictureInPicture));
     },
     back() {
       const history = lookup()?.webContents.navigationHistory;

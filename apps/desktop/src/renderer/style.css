@@ -461,7 +461,7 @@ a:focus-visible {
   pointer-events: none;
   transition: opacity 140ms ease 180ms;
 }
-.browser-float:is(:hover, :focus-within, [data-pointer-inside='true'], [data-moving='true'])
+.browser-float:is(:hover, :has(:focus-visible), [data-pointer-inside='true'], [data-moving='true'])
   .browser-chrome {
   opacity: 1;
   pointer-events: auto;
@@ -529,32 +529,57 @@ a:focus-visible {
 .browser-tabs-scroll {
   overflow-x: auto;
   overflow-y: hidden;
+  overscroll-behavior-x: contain;
   scrollbar-width: none;
 }
 .browser-tabs-list {
   width: 100%;
   justify-content: flex-start;
-  gap: 2px;
+  gap: 0;
   padding: 0;
 }
 .browser-tab {
   display: flex;
   align-items: center;
   flex: 1 1 168px;
-  min-width: 40px;
+  min-width: 64px;
   max-width: 168px;
   height: 100%;
-  gap: 2px;
-  border-radius: 9px 9px 0 0;
-  padding-right: 4px;
+  gap: 3px;
+  overflow: hidden;
+  border-radius: 8px 8px 0 0;
   container: browser-tab / inline-size;
-  transition: background-color 150ms ease;
+  transition:
+    flex-basis 180ms var(--ease-out),
+    min-width 180ms var(--ease-out),
+    max-width 180ms var(--ease-out),
+    opacity 180ms ease,
+    background-color 150ms ease;
+}
+@starting-style {
+  .browser-tab[data-phase='entering'] {
+    flex-basis: 0;
+    min-width: 0;
+    max-width: 0;
+    opacity: 0;
+  }
+}
+.browser-tab[data-phase='closing'] {
+  animation: browser-tab-close 180ms var(--ease-out) both;
+}
+@keyframes browser-tab-close {
+  to {
+    flex-basis: 0;
+    min-width: 0;
+    max-width: 0;
+    opacity: 0;
+  }
 }
 .browser-tab:hover {
   background: var(--secondary);
 }
 .browser-tab[data-active='true'] {
-  background: var(--surface);
+  background: var(--secondary);
 }
 .browser-tab:has(.browser-tab-trigger:focus-visible) {
   background: var(--secondary);
@@ -562,7 +587,9 @@ a:focus-visible {
 .browser-tab .browser-tab-trigger {
   min-width: 0;
   justify-content: flex-start;
-  padding-inline: 8px 2px;
+  gap: 6px;
+  border: 0 !important;
+  padding-inline: 8px 0;
 }
 .browser-tab .browser-tab-trigger:focus-visible {
   border-color: transparent;
@@ -579,27 +606,24 @@ a:focus-visible {
   object-fit: contain;
 }
 .browser-tab-close {
+  width: 22px;
+  height: 22px;
+  margin-right: 6px;
   color: var(--muted-foreground);
+  opacity: 0;
+  pointer-events: none;
 }
-@container browser-tab (width < 101px) {
+.browser-tab:is([data-active='true'], :hover, :focus-within) .browser-tab-close {
+  opacity: 1;
+  pointer-events: auto;
+}
+@container browser-tab (width < 100px) {
   .browser-tab .browser-tab-trigger {
     justify-content: center;
-    padding-inline: 4px;
+    padding-inline: 5px 0;
   }
   .browser-tab-title {
     display: none;
-  }
-}
-@container browser-tab (width < 65px) {
-  .browser-tab-close {
-    position: absolute;
-    opacity: 0;
-    pointer-events: none;
-  }
-  .browser-tab-close:focus-visible {
-    position: static;
-    opacity: 1;
-    pointer-events: auto;
   }
 }
 .browser-toolbar {

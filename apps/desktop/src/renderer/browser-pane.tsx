@@ -63,6 +63,24 @@ function tabLabel(tab: BrowserTab | undefined, fallback: string) {
   return [tab?.title, tab?.url].find(Boolean) ?? fallback;
 }
 
+interface DisplayTab {
+  tab: BrowserTab;
+  phase?: 'entering' | 'closing';
+}
+
+function reconcileTabs(previous: DisplayTab[], tabs: BrowserTab[]): DisplayTab[] {
+  const remaining = new Map(tabs.map(tab => [tab.id, tab]));
+
+  const ordered = previous.map(({ tab }) => {
+    const current = remaining.get(tab.id);
+    remaining.delete(tab.id);
+
+    return current ? { tab: current } : ({ tab, phase: 'closing' } as const);
+  });
+
+  return [...ordered, ...[...remaining.values()].map(tab => ({ tab, phase: 'entering' }) as const)];
+}
+
 function BrowserTabList({
   tabs,
   activeId,
@@ -74,84 +92,150 @@ function BrowserTabList({
   select: (id: string) => void;
   close: (id: string) => void;
 }) {
-  const list = useRef<HTMLDivElement>(null);
+  const scrollArea = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    list.current
-      ?.querySelector('[data-active="true"]')
-      ?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  const [display, setDisplay] = useState(() => ({
+    source: tabs,
+    items: tabs.map<DisplayTab>(tab => ({ tab })),
+  }));
+
+  if (display.source !== tabs) {
+    setDisplay({ source: tabs, items: reconcileTabs(display.items, tabs) });
+  }
+
+  useLayoutEffect(() => {
+    const area = scrollArea.current;
+
+    if (!area) {
+      return;
+    }
+
+    const active = area.querySelector<HTMLElement>('[data-active="true"]');
+
+    const reveal = () => {
+      if (!active) {
+        return;
+      }
+
+      const { left, right } = active.getBoundingClientRect();
+      const viewport = area.getBoundingClientRect();
+
+      if (left < viewport.left) {
+        area.scrollLeft += left - viewport.left;
+      } else if (right > viewport.right) {
+        area.scrollLeft += right - viewport.right;
+      }
+    };
+
+    const observer = new ResizeObserver(reveal);
+    observer.observe(area);
+
+    if (active) {
+      observer.observe(active);
+      reveal();
+    }
+
+    function scrollTabs(event: WheelEvent) {
+      if (!area || !event.deltaY || event.deltaX || event.ctrlKey) {
+        return;
+      }
+
+      if (area.scrollWidth > area.clientWidth) {
+        event.preventDefault();
+
+        // 用户滚动后，停止跟随标签的进入动画，直到下一次激活标签。
+        if (active) {
+          observer.unobserve(active);
+        }
+
+        const units = [1, 16, area.clientWidth];
+        area.scrollLeft += event.deltaY * (units[event.deltaMode] ?? 1);
+      }
+    }
+
+    area.addEventListener('wheel', scrollTabs, { passive: false });
+
+    return () => {
+      observer.disconnect();
+      area.removeEventListener('wheel', scrollTabs);
+    };
   }, [activeId]);
 
   return (
     <TooltipProvider delayDuration={380}>
       <Tabs className="min-w-0 flex-1" value={activeId ?? ''} onValueChange={select}>
-        {tabs.length > 0 && (
-          <div className="browser-tabs-scroll">
-            <TabsList
-              ref={list}
-              variant="line"
-              className="browser-tabs-list"
-              aria-label="网页标签页"
-            >
-              {tabs.map(tab => {
-                const title = tabLabel(tab, '新标签页');
+        <div ref={scrollArea} className="browser-tabs-scroll">
+          <TabsList variant="line" className="browser-tabs-list" aria-label="网页标签页">
+            {display.items.map(({ tab, phase }) => {
+              const title = tabLabel(tab, '新标签页');
+              const closing = phase === 'closing';
 
-                return (
-                  <div
-                    className="browser-tab"
-                    key={tab.id}
-                    data-active={tab.id === activeId}
-                    onAuxClick={event => {
-                      if (event.button === 1) {
-                        event.preventDefault();
-                        close(tab.id);
-                      }
-                    }}
+              return (
+                <div
+                  className="browser-tab"
+                  key={tab.id}
+                  data-active={tab.id === activeId}
+                  data-phase={phase}
+                  inert={closing}
+                  onAnimationEnd={event => {
+                    if (closing && event.target === event.currentTarget) {
+                      setDisplay(current => ({
+                        ...current,
+                        items: current.items.filter(item => item.tab.id !== tab.id),
+                      }));
+                    }
+                  }}
+                  onAuxClick={event => {
+                    if (event.button === 1) {
+                      event.preventDefault();
+                      close(tab.id);
+                    }
+                  }}
+                >
+                  <Tooltip disableHoverableContent>
+                    <TooltipTrigger asChild>
+                      <TabsTrigger
+                        className="browser-tab-trigger"
+                        value={tab.id}
+                        aria-label={title}
+                        aria-controls="browser-viewport"
+                        disabled={closing}
+                      >
+                        {tab.favicon ? (
+                          <img
+                            className="browser-tab-icon"
+                            src={tab.favicon}
+                            alt=""
+                            referrerPolicy="no-referrer"
+                          />
+                        ) : (
+                          <Globe
+                            className="browser-tab-icon"
+                            color={kubaiMixed.globe}
+                            aria-hidden="true"
+                          />
+                        )}
+                        <span className="browser-tab-title truncate">{title}</span>
+                      </TabsTrigger>
+                    </TooltipTrigger>
+                    <TooltipContent side="top" sideOffset={4} className="break-all">
+                      {title}
+                    </TooltipContent>
+                  </Tooltip>
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    className="browser-tab-close"
+                    aria-label={`关闭标签页：${title}`}
+                    onClick={() => close(tab.id)}
                   >
-                    <Tooltip disableHoverableContent>
-                      <TooltipTrigger asChild>
-                        <TabsTrigger
-                          className="browser-tab-trigger"
-                          value={tab.id}
-                          aria-label={title}
-                          aria-controls="browser-viewport"
-                        >
-                          {tab.favicon ? (
-                            <img
-                              className="browser-tab-icon"
-                              src={tab.favicon}
-                              alt=""
-                              referrerPolicy="no-referrer"
-                            />
-                          ) : (
-                            <Globe
-                              className="browser-tab-icon"
-                              color={kubaiMixed.globe}
-                              aria-hidden="true"
-                            />
-                          )}
-                          <span className="browser-tab-title truncate">{title}</span>
-                        </TabsTrigger>
-                      </TooltipTrigger>
-                      <TooltipContent side="top" sideOffset={4} className="break-all">
-                        {title}
-                      </TooltipContent>
-                    </Tooltip>
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      className="browser-tab-close"
-                      aria-label={`关闭标签页：${title}`}
-                      onClick={() => close(tab.id)}
-                    >
-                      <X />
-                    </Button>
-                  </div>
-                );
-              })}
-            </TabsList>
-          </div>
-        )}
+                    <X />
+                  </Button>
+                </div>
+              );
+            })}
+          </TabsList>
+        </div>
       </Tabs>
     </TooltipProvider>
   );
@@ -225,7 +309,7 @@ function useNativeBounds(
         '[data-slot="dialog-content"], [data-slot="popover-content"], [data-slot="dropdown-menu-content"]',
       );
 
-      const bounds =
+      const frame =
         width >= 1 && height >= 1 && !hasPortal
           ? {
               x: Math.round(x),
@@ -235,6 +319,7 @@ function useNativeBounds(
             }
           : null;
 
+      const bounds = frame ? { frame, pictureInPicture: !full } : null;
       const key = bounds ? JSON.stringify(bounds) : '';
 
       if (key !== lastBounds.current) {
@@ -299,7 +384,6 @@ export function BrowserPane({
   const { frame, mode, moving } = layout;
   const visible = !full && open && state.tabs.length > 0 && frame.width > 0 && frame.height > 0;
   const currentTab = state.tabs.find(tab => tab.id === state.activeId);
-  const title = tabLabel(currentTab, '浏览器');
 
   useEffect(() => {
     const leaving = wasFull.current && !full;
@@ -310,7 +394,7 @@ export function BrowserPane({
     }
   }, [full, onOpenChange, state.url]);
 
-  useNativeBounds(surface, full || (visible && mode !== 'capsule' && !moving), frame, full);
+  useNativeBounds(surface, full || (visible && mode === 'pip'), frame, full);
 
   return (
     <>
@@ -329,7 +413,7 @@ export function BrowserPane({
               layout={layout}
               state={state}
               surface={surface}
-              title={title}
+              title={tabLabel(currentTab, '新标签页')}
               favicon={currentTab?.favicon}
               onClose={() => onOpenChange(false)}
             />
@@ -342,11 +426,13 @@ export function BrowserPane({
 
 function BrowserTitle({
   layout,
+  state,
   title,
   favicon,
   onClose,
 }: {
   layout: BrowserLayout;
+  state: BrowserState;
   title: string;
   favicon?: string;
   onClose: () => void;
@@ -364,7 +450,9 @@ function BrowserTitle({
         {favicon && <img src={favicon} alt="" referrerPolicy="no-referrer" className="size-3.5" />}
         <span className="truncate">{title}</span>
       </span>
-      {mode !== 'capsule' && (
+      {mode === 'pip' && <PictureInPictureActions state={state} />}
+      <BrowserModeButton mode={mode} setMode={setMode} />
+      {mode === 'pip' && (
         <Button
           variant="ghost"
           size="icon-xs"
@@ -374,11 +462,35 @@ function BrowserTitle({
           <Minus />
         </Button>
       )}
-      <BrowserModeButton mode={mode} setMode={setMode} />
       <Button variant="ghost" size="icon-xs" aria-label="关闭浏览器浮窗" onClick={onClose}>
         <X />
       </Button>
     </div>
+  );
+}
+
+function PictureInPictureActions({ state }: { state: BrowserState }) {
+  return (
+    <>
+      <Button
+        variant="ghost"
+        size="icon-xs"
+        aria-label="后退"
+        disabled={!state.canGoBack}
+        onClick={() => void rpc.browser.back()}
+      >
+        <ArrowLeft />
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon-xs"
+        aria-label="刷新"
+        disabled={!state.url}
+        onClick={() => void rpc.browser.reload()}
+      >
+        {state.loading ? <LoaderCircle className="animate-spin" /> : <RotateCw />}
+      </Button>
+    </>
   );
 }
 
@@ -453,10 +565,10 @@ function BrowserFrame({
   favicon?: string;
   onClose: () => void;
 }) {
-  const { mode, moving } = layout;
+  const { mode } = layout;
 
   const heading = (
-    <BrowserTitle layout={layout} title={title} favicon={favicon} onClose={onClose} />
+    <BrowserTitle layout={layout} state={state} title={title} favicon={favicon} onClose={onClose} />
   );
 
   if (mode === 'capsule') {
@@ -465,10 +577,7 @@ function BrowserFrame({
 
   return (
     <>
-      <div className="browser-chrome">
-        {heading}
-        <BrowserControls state={state} />
-      </div>
+      <div className="browser-chrome">{heading}</div>
       <div
         className="browser-surface"
         id="browser-viewport"
@@ -476,33 +585,27 @@ function BrowserFrame({
         aria-label="当前网页"
         ref={surface}
       >
-        {(!state.url || moving) && (
+        {!state.url && (
           <Empty className="gap-2 p-3">
             <EmptyHeader className="gap-1">
               <EmptyMedia className="mb-0">
                 <Globe size={26} color={kubaiMixed.globe} aria-hidden="true" />
               </EmptyMedia>
-              <EmptyTitle className="text-sm">
-                {moving && state.url ? title : '网页预览'}
-              </EmptyTitle>
-              {!state.url && (
-                <EmptyDescription className="text-xs">输入网址打开网页</EmptyDescription>
-              )}
+              <EmptyTitle className="text-sm">新标签页</EmptyTitle>
             </EmptyHeader>
           </Empty>
         )}
       </div>
-      {mode === 'pip' &&
-        (['nw', 'ne', 'sw', 'se'] as const).map(corner => (
-          <span
-            key={corner}
-            className="browser-resize-grip"
-            data-corner={corner}
-            aria-hidden="true"
-            onPointerDown={event => layout.begin(event, corner)}
-            {...layout.pointerEvents}
-          />
-        ))}
+      {(['nw', 'ne', 'sw', 'se'] as const).map(corner => (
+        <span
+          key={corner}
+          className="browser-resize-grip"
+          data-corner={corner}
+          aria-hidden="true"
+          onPointerDown={event => layout.begin(event, corner)}
+          {...layout.pointerEvents}
+        />
+      ))}
     </>
   );
 }
