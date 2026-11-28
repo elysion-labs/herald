@@ -41,7 +41,15 @@ export function chatModelKey(workspaceId: string, id: string) {
   return [...workspaceKey(workspaceId), 'chat-model-choice', id];
 }
 
-export function ChatModelControls({ id, disabled }: { id: string; disabled: boolean }) {
+export function ChatModelControls({
+  id,
+  disabled,
+  side,
+}: {
+  id: string;
+  disabled: boolean;
+  side: 'top' | 'bottom';
+}) {
   const client = useQueryClient();
   const catalog = useQuery(modelCatalogQuery);
   const { id: workspaceId } = useWorkspace();
@@ -74,7 +82,8 @@ export function ChatModelControls({ id, disabled }: { id: string; disabled: bool
           <InputGroupButton
             type="button"
             variant="ghost"
-            size="sm"
+            size="xs"
+            className="composer-action"
             disabled={locked}
             aria-label="选择模型"
           >
@@ -82,7 +91,12 @@ export function ChatModelControls({ id, disabled }: { id: string; disabled: bool
             <ChevronDown data-icon="inline-end" />
           </InputGroupButton>
         </PopoverTrigger>
-        <PopoverContent side="top" align="start" className="w-72 p-0">
+        <PopoverContent
+          side={side}
+          align="start"
+          aria-label="选择模型"
+          className="w-64 overflow-hidden p-0"
+        >
           <ModelPicker
             providers={providers}
             current={current}
@@ -97,6 +111,7 @@ export function ChatModelControls({ id, disabled }: { id: string; disabled: bool
         model={current}
         available={thinking}
         disabled={locked}
+        side={side}
         onSelect={next => save.mutate(next)}
       />
       {save.isError && (
@@ -140,16 +155,14 @@ function ModelPicker({
   onManage: () => void;
 }) {
   return (
-    <Command className="rounded-xl p-0">
-      <div className="flex items-center gap-1 pr-1.5">
-        <div className="min-w-0 flex-1">
-          <CommandInput placeholder="搜索模型" />
-        </div>
+    <Command>
+      <div className="border-border flex items-center border-b pr-1">
+        <CommandInput placeholder="搜索模型" aria-label="搜索模型" />
         <Button
           asChild
           variant="ghost"
           size="icon-sm"
-          className="text-muted-foreground hover:text-foreground shrink-0"
+          className="text-muted-foreground hover:text-foreground shrink-0 rounded-md"
         >
           <Link
             to="/settings"
@@ -162,10 +175,21 @@ function ModelPicker({
           </Link>
         </Button>
       </div>
+      {!providers.length && (
+        <div className="text-muted-foreground grid justify-items-center gap-2 px-3 py-4 text-center text-xs">
+          <p>还没有可用的模型供应商</p>
+          <Link
+            to="/settings"
+            search={{ section: 'models' }}
+            className="text-foreground underline underline-offset-3"
+            onClick={onManage}
+          >
+            去设置配置模型
+          </Link>
+        </div>
+      )}
       <CommandList className="max-h-80">
-        <CommandEmpty>
-          {providers.length ? '没有匹配的模型' : '还没有可用的模型供应商'}
-        </CommandEmpty>
+        {providers.length > 0 && <CommandEmpty>没有匹配的模型</CommandEmpty>}
         {providers.map(provider => (
           <CommandGroup key={provider.id} heading={provider.name || provider.id}>
             {provider.models.map(model => (
@@ -192,12 +216,14 @@ function ThinkingControl({
   model,
   available,
   disabled,
+  side,
   onSelect,
 }: {
   current?: ChatModelChoice | null;
   model?: ChatModelChoice;
   available: NonNullable<ChatModelChoice['thinking']>[];
   disabled: boolean;
+  side: 'top' | 'bottom';
   onSelect: (next: ChatModelChoice) => void;
 }) {
   const reasoning = available.some(level => level !== 'off');
@@ -208,7 +234,8 @@ function ThinkingControl({
         <InputGroupButton
           type="button"
           variant="ghost"
-          size="sm"
+          size="xs"
+          className="composer-action"
           aria-label="思考等级"
           disabled={disabled || !reasoning}
           title={reasoning ? '思考等级' : '当前模型未提供思考等级'}
@@ -217,7 +244,7 @@ function ThinkingControl({
           <ChevronDown data-icon="inline-end" />
         </InputGroupButton>
       </DropdownMenuTrigger>
-      <DropdownMenuContent side="top" align="start">
+      <DropdownMenuContent side={side} align="start">
         <DropdownMenuGroup>
           <DropdownMenuItem
             onSelect={() => {

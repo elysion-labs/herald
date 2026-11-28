@@ -41,17 +41,17 @@
 :root {
   color-scheme: dark;
   font-family: 'Geist', 'Segoe UI Variable', 'Microsoft YaHei UI', system-ui, sans-serif;
-  --chrome: #0b0b0d;
-  --background: #131316;
-  --surface: #1a1a1e;
-  --popover: #1c1c21;
+  --chrome: #0a0a0b;
+  --background: #111113;
+  --surface: #19191d;
+  --popover: #1e1e23;
   --secondary: #26262c;
   --accent: #26262c;
   --foreground: #f4f4f5;
   --muted-foreground: #9d9da6;
   --brand: #e5e5e5;
   --primary: #e5e5e5;
-  --primary-foreground: #131316;
+  --primary-foreground: var(--background);
   --border: #ffffff12;
   --input: #ffffff1f;
   --ring: #8a8a93;
@@ -60,6 +60,9 @@
   --success: #22c55e;
   --warning: #f59e0b;
   --radius: 0.625rem;
+  --panel-divider: color-mix(in srgb, var(--border) 75%, transparent);
+  --floating-border: color-mix(in srgb, var(--foreground) 13%, transparent);
+  --floating-shadow: 0 5px 18px #0004, 0 2px 5px #0002;
   --topbar-height: 40px;
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
@@ -86,6 +89,7 @@
   --notice: #2563eb;
   --success: #15803d;
   --warning: #a16207;
+  --floating-shadow: 0 5px 18px #18181b15, 0 2px 5px #18181b0a;
 }
 
 html,
@@ -320,6 +324,9 @@ a:focus-visible {
   grid-template-rows: minmax(0, 1fr);
   margin: 0 8px 8px 0;
   overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--background);
   transition: grid-template-columns 200ms var(--ease-out);
 }
 .stage[data-list='true'] {
@@ -332,7 +339,7 @@ a:focus-visible {
   grid-area: 1 / 1;
   flex-direction: column;
   overflow: hidden;
-  background: var(--chrome);
+  box-shadow: inset -1px 0 var(--panel-divider);
 }
 .stage[data-list='false'] > .secondary-pane {
   visibility: hidden;
@@ -383,9 +390,6 @@ a:focus-visible {
   min-height: 0;
   grid-area: 1 / 2;
   overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--background);
   animation: route-enter 180ms var(--ease-out) both;
 }
 @keyframes route-enter {
@@ -419,9 +423,6 @@ a:focus-visible {
   flex-direction: column;
   overflow: hidden;
   pointer-events: auto;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--background);
 }
 .browser-full-controls {
   flex-shrink: 0;
@@ -443,6 +444,7 @@ a:focus-visible {
 }
 
 .workbench-divider {
+  background: var(--panel-divider);
   transition: background-color 150ms ease;
 }
 .workbench-divider:is(:hover, :focus-visible, [data-separator='active']) {
@@ -669,19 +671,34 @@ a:focus-visible {
   border-radius: inherit;
 }
 .browser-error {
-  padding: 7px 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
   border-top: 1px solid var(--border);
   color: var(--destructive);
   font-size: 0.8rem;
 }
-.login-webview {
-  display: flex;
+.login-webview-frame {
+  position: relative;
   min-width: 0;
   min-height: 0;
-  width: 100%;
-  height: 100%;
   overflow: hidden;
   border-radius: 8px;
+  container-type: size;
+}
+.login-webview {
+  display: flex;
+  width: 100%;
+  height: 100%;
+}
+.login-webview-frame[data-platform='bilibili'] .login-webview {
+  /* 登录页是固定宽度布局。缩放嵌入视图，避免右侧登录表单被窄窗口截掉。 */
+  --login-page-width: max(100cqw, 1160px);
+  width: var(--login-page-width);
+  height: calc(100cqh * (var(--login-page-width) / 100cqw));
+  scale: calc(100cqw / var(--login-page-width));
+  transform-origin: top left;
 }
 
 /* ---------- 页面 ---------- */
@@ -870,7 +887,6 @@ a:focus-visible {
   height: 100%;
   min-width: 0;
   flex-direction: column;
-  background: var(--chrome);
   animation: fade-in 200ms ease both;
 }
 .danmaku-header {
@@ -926,18 +942,23 @@ a:focus-visible {
   display: grid;
   place-items: center;
   padding: 24px;
-  background: color-mix(in srgb, var(--background) 94%, transparent);
+  background: color-mix(in srgb, var(--background) 92%, transparent);
   backdrop-filter: blur(8px);
-  animation: fade-in 220ms ease both;
+  animation: fade-in 200ms ease both;
 }
 .start-live-content {
   display: grid;
   width: 100%;
-  max-width: 28rem;
+  max-width: 22.5rem;
   min-width: 0;
   justify-items: center;
-  gap: 9px;
+  gap: 12px;
   text-align: center;
+  animation: fade-up 200ms var(--ease-out) both;
+}
+.start-live-rooms > li + li::before {
+  margin-inline-end: 4px;
+  content: '·';
 }
 .chat-composer {
   position: absolute;
@@ -971,6 +992,46 @@ a:focus-visible {
 }
 .composer-box:focus-within {
   border-color: var(--input);
+}
+.composer-action[data-slot='button'] {
+  height: 26px;
+  gap: 4px;
+  padding-inline: 6px;
+  border-radius: 6px;
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+}
+.composer-action:is(:hover, [data-state='open']):not(:disabled) {
+  color: var(--foreground);
+}
+.composer-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  padding: 4px 6px 4px 10px;
+  border: 1px solid color-mix(in srgb, var(--destructive) 26%, transparent);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--destructive) 8%, var(--background));
+  color: var(--destructive);
+  font-size: 0.8125rem;
+}
+.floating-surface {
+  border: 1px solid var(--floating-border);
+  border-radius: var(--radius);
+  background: var(--popover);
+  color: var(--foreground);
+  box-shadow: var(--floating-shadow);
+}
+.floating-surface[data-slot='tooltip-content'] {
+  border-radius: 7px;
+  overflow-wrap: anywhere;
+}
+.floating-surface[data-slot='dialog-content'] {
+  border-radius: calc(var(--radius) + 4px);
+}
+[data-slot='popover-content'] [data-slot='command-list'] {
+  max-height: min(18rem, calc(var(--radix-popover-content-available-height, 18rem) - 2.25rem));
 }
 .chat-body .chat-scroll-button[data-direction='end'] {
   bottom: var(--composer-clearance);

@@ -2,12 +2,15 @@ import { describeTrigger, reminderPlatform } from '@herald/live-assistant/settin
 import { useIsMutating, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import BroadcastIcon from 'kubai-icons-react/icons/radio-tower';
-import { ThumbsDown, ThumbsUp } from 'lucide-react';
+import { LoaderCircle, Radio, ThumbsDown, ThumbsUp } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
+import { platformLabels, platforms } from '../shared/platforms.ts';
 import { kubaiMixed } from './kubai-colors.ts';
-import { LiveDuration, RoomIndicators, useRooms } from './live-status.tsx';
+import { LiveDuration, roomSummary, StatusDot, useRooms } from './live-status.tsx';
+import type { Room } from './live-status.tsx';
 import { PlatformIcon } from './platform-icon.tsx';
 import { useReminderCards } from './reminders.tsx';
 import type { ReminderCard, ReminderVerdict } from './reminders.tsx';
@@ -166,49 +169,116 @@ export function LiveControl({ conversation }: { conversation: Conversation }) {
 
 /** 未开播的助手会话可以直接开播，或收起遮罩后先准备。 */
 export function StartLiveOverlay({ onDismiss }: { onDismiss: () => void }) {
-  const { name } = useWorkspace();
-  const { data: rooms, error, isPending } = useRooms();
+  const { data: rooms, error, isPending, refetch } = useRooms();
   const { mutation, busy } = useLiveAction('start');
-  const bound = Boolean(rooms?.length);
 
   return (
     <div className="start-live-overlay">
       <div className="start-live-content">
-        <BroadcastIcon size={32} color={kubaiMixed.broadcast} aria-hidden="true" />
-        <h2 className="max-w-full truncate text-xl font-medium tracking-tight">{name}</h2>
-        {bound ? (
-          <RoomIndicators rooms={rooms} />
-        ) : (
-          <p className="text-muted-foreground text-sm">
-            {error?.message ?? (isPending ? '正在读取直播间…' : '还没有绑定直播间')}
+        <BroadcastIcon size={24} color={kubaiMixed.tv} aria-hidden="true" />
+        <h2 className="text-lg font-semibold tracking-tight">准备开播</h2>
+        {isPending && (
+          <p role="status" className="text-muted-foreground text-xs">
+            正在读取直播间…
           </p>
         )}
-        <Button
-          size="lg"
-          className="mt-3 min-w-28 rounded-lg"
-          disabled={!bound || busy}
-          onClick={() => mutation.mutate()}
-        >
-          {busy ? '正在开播…' : '开播'}
-        </Button>
-        {!bound && !isPending && !error && (
-          <Link
-            to="/settings"
-            search={{ section: 'rooms' }}
-            className="text-foreground text-xs underline-offset-3 hover:underline"
+        {rooms && <StartLiveRooms rooms={rooms} />}
+        {error && (
+          <div className="text-destructive flex flex-wrap items-center justify-center gap-2 text-xs">
+            <span role="alert" className="wrap-anywhere">
+              {error.message}
+            </span>
+            <button
+              type="button"
+              className="underline underline-offset-3"
+              onClick={() => void refetch()}
+            >
+              重试
+            </button>
+          </div>
+        )}
+        <div className="mt-2 grid w-full justify-items-center gap-2">
+          {mutation.error && (
+            <p role="alert" className="text-destructive max-w-full text-xs wrap-anywhere">
+              {mutation.error.message}
+            </p>
+          )}
+          <Button
+            size="lg"
+            className="h-10 w-full max-w-50 rounded-lg"
+            disabled={!rooms?.length || busy}
+            onClick={() => mutation.mutate()}
           >
-            去设置绑定直播间
-          </Link>
-        )}
-        {mutation.error && (
-          <p role="alert" className="text-destructive text-xs">
-            {mutation.error.message}
-          </p>
-        )}
-        <Button variant="link" size="sm" className="text-muted-foreground" onClick={onDismiss}>
-          先在这里准备
-        </Button>
+            {busy ? <LoaderCircle className="animate-spin" /> : <Radio />}
+            {busy ? '正在开播…' : '开播'}
+          </Button>
+          <Button
+            variant="link"
+            size="sm"
+            className="text-muted-foreground text-xs"
+            onClick={onDismiss}
+          >
+            先在这里准备
+          </Button>
+        </div>
       </div>
     </div>
+  );
+}
+
+function StartLiveRooms({ rooms }: { rooms: Room[] }) {
+  const bindingLink = 'hover:text-foreground underline underline-offset-3';
+
+  if (!rooms.length) {
+    return (
+      <p className="text-muted-foreground flex items-center gap-2 text-[13px]">
+        还没有绑定直播间
+        <span aria-hidden="true">·</span>
+        <Link to="/settings" search={{ section: 'rooms' }} className={bindingLink}>
+          去绑定
+        </Link>
+      </p>
+    );
+  }
+
+  return (
+    <TooltipProvider delayDuration={300}>
+      <ul className="start-live-rooms text-muted-foreground flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[13px]">
+        {platforms.map(platform => {
+          const room = rooms.find(item => item.platform === platform);
+
+          return (
+            <li key={platform} className="flex min-w-0 items-center gap-1.5">
+              {room ? (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span
+                      tabIndex={0}
+                      className="inline-flex min-w-0 items-center gap-1.5 rounded-sm"
+                      aria-label={roomSummary(room)}
+                    >
+                      <PlatformIcon platform={platform} size={14} />
+                      <span className="max-w-24 truncate tabular-nums">{room.roomId}</span>
+                      <StatusDot room={room} />
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent sideOffset={6}>{roomSummary(room)}</TooltipContent>
+                </Tooltip>
+              ) : (
+                <Link
+                  to="/settings"
+                  search={{ section: 'rooms' }}
+                  className={`inline-flex items-center gap-1.5 ${bindingLink}`}
+                  aria-label={`绑定${platformLabels[platform]}直播间`}
+                >
+                  <PlatformIcon platform={platform} size={14} />
+                  绑定
+                </Link>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </TooltipProvider>
   );
 }

@@ -1,5 +1,5 @@
 import { Link } from '@tanstack/react-router';
-import { ArrowDown, X } from 'lucide-react';
+import { ArrowDown } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
@@ -47,13 +47,7 @@ function useDanmaku(bindingKey: string) {
 }
 
 /** 助手会话里位于聊天与浏览器之间的实时弹幕栏，顶部是最新的提醒。 */
-export function DanmakuPanel({
-  conversationId,
-  onClose,
-}: {
-  conversationId: string;
-  onClose: () => void;
-}) {
+export function DanmakuPanel({ conversationId }: { conversationId: string }) {
   const { data: rooms, isPending, isError } = useRooms();
   const bindingKey = rooms?.map(room => `${room.platform}:${room.roomId}`).join(',') ?? '';
   const messages = useDanmaku(bindingKey);
@@ -76,15 +70,6 @@ export function DanmakuPanel({
           <h2 className="text-sm font-medium">实时弹幕</h2>
           {Boolean(rooms?.length) && <RoomIndicators rooms={rooms} compact />}
         </div>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          className="text-muted-foreground hover:text-foreground ml-auto"
-          aria-label="关闭实时弹幕"
-          onClick={onClose}
-        >
-          <X />
-        </Button>
       </header>
       <AssistantReminders conversationId={conversationId} />
       <div className="relative flex min-h-0 flex-1 flex-col">

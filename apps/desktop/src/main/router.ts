@@ -339,7 +339,20 @@ export function createRouter(
     browser: {
       navigate: os
         .input(z.object({ url: z.string().max(4096), tabId: z.uuid().optional() }))
-        .handler(({ input }) => browser.navigate(input.url, input.tabId)),
+        .handler(async ({ input }) => {
+          try {
+            await browser.navigate(input.url, input.tabId);
+          } catch (error) {
+            if (error instanceof TypeError) {
+              throw new ORPCError('BAD_REQUEST', { message: error.message, cause: error });
+            }
+
+            throw new ORPCError('BAD_GATEWAY', {
+              message: '无法打开网页，请检查网址和网络连接后重试。',
+              cause: error,
+            });
+          }
+        }),
       openTab: os
         .input(z.string().max(4096).optional())
         .handler(({ input }) => browser.openTab(input)),

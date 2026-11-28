@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 
+import { InputGroupButton } from '@/components/ui/input-group';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 
 import { rpc } from './rpc.ts';
@@ -27,8 +28,15 @@ function Ring({ ratio }: { ratio: number }) {
   const circumference = 2 * Math.PI * radius;
 
   return (
-    <svg viewBox="0 0 18 18" className="size-[18px] -rotate-90" aria-hidden="true">
-      <circle cx="9" cy="9" r={radius} fill="none" strokeWidth="2" className="stroke-border" />
+    <svg viewBox="0 0 18 18" className="size-3.5 -rotate-90" aria-hidden="true">
+      <circle
+        cx="9"
+        cy="9"
+        r={radius}
+        fill="none"
+        strokeWidth="2"
+        className="stroke-muted-foreground/50"
+      />
       <circle
         cx="9"
         cy="9"
@@ -49,7 +57,9 @@ function Row({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-center justify-between gap-6">
       <span className="text-muted-foreground">{label}</span>
-      <span className="font-medium tabular-nums">{value}</span>
+      <span className="truncate text-right font-medium tabular-nums" title={value}>
+        {value}
+      </span>
     </div>
   );
 }
@@ -58,8 +68,8 @@ function WindowUsage({ usage }: { usage: Usage }) {
   const ratio = usageRatio(usage);
   const percent = Math.round(ratio * 100);
 
-  if (!usage.contextTokens || !usage.contextWindow) {
-    return <p className="text-muted-foreground">暂无上下文数据</p>;
+  if (!usage.contextWindow) {
+    return <p className="text-muted-foreground">已使用 0% · 暂无上下文数据</p>;
   }
 
   return (
@@ -102,7 +112,7 @@ function UsageDetails({ usage }: { usage?: Usage }) {
 }
 
 /** 发送按钮旁的上下文占用圆环，悬停查看窗口占用、累计 token 与费用。 */
-export function ContextUsage({ id }: { id: string }) {
+export function ContextUsage({ id, side }: { id: string; side: 'top' | 'bottom' }) {
   const { id: workspaceId } = useWorkspace();
 
   const { data } = useQuery({
@@ -111,30 +121,45 @@ export function ContextUsage({ id }: { id: string }) {
   });
 
   const ratio = usageRatio(data);
-  const [open, setOpen] = useState(false);
+  const percent = Math.round(ratio * 100);
+  const [reason, setReason] = useState<'hover' | 'click'>();
 
   // 悬停打开、点击也可切换；卡片与其他弹出层同一套样式。
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover
+      open={reason !== undefined}
+      onOpenChange={open => setReason(open ? 'click' : undefined)}
+    >
       <PopoverTrigger asChild>
-        <button
+        <InputGroupButton
           type="button"
-          className="text-muted-foreground hover:bg-muted grid size-7 place-items-center rounded-full transition-colors"
-          aria-label={`上下文已使用 ${Math.round(ratio * 100)}%`}
-          onPointerEnter={() => setOpen(true)}
-          onPointerLeave={() => setOpen(false)}
+          size="xs"
+          className="composer-action tabular-nums"
+          aria-label={`上下文已使用 ${percent}%`}
+          onPointerEnter={event => {
+            if (event.pointerType === 'mouse') {
+              setReason(current => current ?? 'hover');
+            }
+          }}
+          onPointerLeave={() => setReason(current => (current === 'hover' ? undefined : current))}
+          onClick={event => {
+            event.preventDefault();
+            setReason(current => (current === 'click' ? undefined : 'click'));
+          }}
         >
           <Ring ratio={ratio} />
-        </button>
+          <span>{percent}%</span>
+        </InputGroupButton>
       </PopoverTrigger>
       <PopoverContent
-        side="top"
+        side={side}
         align="end"
         sideOffset={8}
-        className="pointer-events-none w-72 p-4 text-xs"
+        aria-label="上下文窗口"
+        className="w-60 text-xs"
         onOpenAutoFocus={event => event.preventDefault()}
       >
-        <div className="grid gap-3">
+        <div className="grid gap-2">
           <p className="text-sm font-medium">上下文窗口</p>
           <UsageDetails usage={data} />
         </div>

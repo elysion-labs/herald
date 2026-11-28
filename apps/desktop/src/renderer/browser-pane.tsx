@@ -306,7 +306,7 @@ function useNativeBounds(
       const { x, y, width, height } = node.getBoundingClientRect();
 
       const hasPortal = document.querySelector(
-        '[data-slot="dialog-content"], [data-slot="popover-content"], [data-slot="dropdown-menu-content"]',
+        '[data-slot="dialog-content"], [data-slot="popover-content"], [data-slot="dropdown-menu-content"], [data-slot="select-content"]',
       );
 
       const frame =
@@ -703,17 +703,36 @@ function BrowserControls({ state }: { state: BrowserState }) {
             ref={addressInput}
             className="h-7 rounded-md px-2.5 text-xs"
             aria-label="网页地址"
+            aria-invalid={navigation.isError}
+            aria-describedby={navigation.isError ? 'browser-address-error' : undefined}
             placeholder="输入网页地址"
             value={address}
-            onChange={event => setDraft({ id: tabId, text: event.target.value })}
+            onChange={event => {
+              setDraft({ id: tabId, text: event.target.value });
+
+              if (navigation.isError) {
+                navigation.reset();
+              }
+            }}
             onFocus={event => event.target.select()}
           />
         </form>
       </div>
       {navigation.isError && (
-        <p role="alert" className="browser-error">
-          {navigation.error.message}
-        </p>
+        <div className="browser-error">
+          <p id="browser-address-error" role="alert" className="min-w-0 wrap-anywhere">
+            {navigation.error.message}
+          </p>
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            className="rounded-md underline underline-offset-3"
+            onClick={() => addressInput.current?.focus()}
+          >
+            修改网址
+          </Button>
+        </div>
       )}
     </>
   );

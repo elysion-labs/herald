@@ -1,5 +1,6 @@
 import type { LivePlatform } from '@herald/live';
 import { useMutation } from '@tanstack/react-query';
+import { Link } from '@tanstack/react-router';
 import { ChevronDown, Zap } from 'lucide-react';
 
 import {
@@ -11,6 +12,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { InputGroupButton } from '@/components/ui/input-group';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
 import { platformLabels } from '../shared/platforms.ts';
 import type { Conversation } from './assistant-mode.tsx';
@@ -58,11 +60,20 @@ function ProfileItem({
   disabled: boolean;
   onSelect: (platform: LivePlatform) => void;
 }) {
+  const label = `分析${platformLabels[platform]}主播信息`;
+
   return (
-    <DropdownMenuItem disabled={disabled} onSelect={() => onSelect(platform)}>
-      <PlatformIcon platform={platform} size={16} />
-      分析{platformLabels[platform]}主播信息
-    </DropdownMenuItem>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <DropdownMenuItem disabled={disabled} onSelect={() => onSelect(platform)}>
+          <PlatformIcon platform={platform} size={16} />
+          <span className="min-w-0 truncate">{label}</span>
+        </DropdownMenuItem>
+      </TooltipTrigger>
+      <TooltipContent side="right" sideOffset={6}>
+        {label}
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -70,10 +81,14 @@ function ProfileItem({
 export function QuickPrompts({
   conversation,
   disabled,
+  side,
+  onProblem,
   onSend,
 }: {
   conversation?: Conversation;
   disabled: boolean;
+  side: 'top' | 'bottom';
+  onProblem: (message: string) => void;
   onSend: (text: string) => Promise<unknown>;
 }) {
   const { id: workspaceId } = useWorkspace();
@@ -87,12 +102,18 @@ export function QuickPrompts({
         throw new Error(`${platformLabels[platform]}还没有绑定直播间`);
       }
 
-      await onSend(profileText(profile));
+      return profileText(profile);
     },
+    onSuccess: message => void onSend(message).catch(() => undefined),
+    onError: error => onProblem(error.message),
   });
 
-  const assistant = conversation?.mode === 'assistant';
   const targets = rooms?.map(room => room.platform) ?? [];
+
+  const canSummarize =
+    conversation?.mode === 'assistant' &&
+    (targets.length > 0 || conversation.liveStartedAt !== null);
+
   const busy = disabled || analyze.isPending;
 
   return (
@@ -101,32 +122,45 @@ export function QuickPrompts({
         <InputGroupButton
           type="button"
           variant="ghost"
-          size="sm"
-          disabled={busy || !targets.length}
-          title={analyze.error?.message ?? '快捷指令'}
+          size="xs"
+          className="composer-action"
+          disabled={busy}
         >
           <Zap />
           快捷
           <ChevronDown data-icon="inline-end" />
         </InputGroupButton>
       </DropdownMenuTrigger>
-      <DropdownMenuContent className="workspace-dropdown" side="top" align="start">
-        <DropdownMenuGroup>
-          <DropdownMenuLabel>快捷指令</DropdownMenuLabel>
-          {targets.map(platform => (
-            <ProfileItem
-              key={platform}
-              platform={platform}
-              disabled={busy}
-              onSelect={target => analyze.mutate(target)}
-            />
-          ))}
-          {assistant && (
-            <DropdownMenuItem disabled={busy} onSelect={() => void onSend(summaryPrompt)}>
-              总结当前直播
-            </DropdownMenuItem>
-          )}
-        </DropdownMenuGroup>
+      <DropdownMenuContent className="w-52" side={side} align="start">
+        <TooltipProvider delayDuration={520}>
+          <DropdownMenuGroup>
+            <DropdownMenuLabel>快捷指令</DropdownMenuLabel>
+            {targets.map(platform => (
+              <ProfileItem
+                key={platform}
+                platform={platform}
+                disabled={busy}
+                onSelect={target => analyze.mutate(target)}
+              />
+            ))}
+            {canSummarize && (
+              <DropdownMenuItem
+                disabled={busy}
+                onSelect={() => void onSend(summaryPrompt).catch(() => undefined)}
+              >
+                <Zap aria-hidden="true" />
+                总结当前直播
+              </DropdownMenuItem>
+            )}
+            {!targets.length && !canSummarize && (
+              <DropdownMenuItem asChild>
+                <Link to="/settings" search={{ section: 'rooms' }}>
+                  绑定直播间以分析主播
+                </Link>
+              </DropdownMenuItem>
+            )}
+          </DropdownMenuGroup>
+        </TooltipProvider>
       </DropdownMenuContent>
     </DropdownMenu>
   );

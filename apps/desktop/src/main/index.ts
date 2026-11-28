@@ -11,7 +11,7 @@ import { openWorkspaces } from './workspaces.ts';
 
 function windowColors() {
   return nativeTheme.shouldUseDarkColors
-    ? { color: '#0b0b0d', symbolColor: '#f4f4f5' }
+    ? { color: '#0a0a0b', symbolColor: '#f4f4f5' }
     : { color: '#f4f4f5', symbolColor: '#18181b' };
 }
 

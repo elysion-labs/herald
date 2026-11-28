@@ -194,20 +194,13 @@ function WorkspaceShell({ switcher }: { switcher: React.ReactNode }) {
     openLogin: (platform, trigger) => setLogin({ platform, trigger, open: true }),
   };
 
-  const isLive = tab === '/live';
-  let togglePanel = hasList ? () => setListOpen(!listOpen) : undefined;
-
-  if (isLive) {
-    togglePanel = () => setDanmakuOpen(!danmakuOpen);
-  }
-
   return (
     <shellContext.Provider value={shell}>
       <div className="desktop">
         <Topbar
           tab={tab}
-          panelOpen={isLive ? danmakuOpen : hasList && listOpen}
-          onTogglePanel={togglePanel}
+          panelOpen={hasList && listOpen}
+          onTogglePanel={hasList ? () => setListOpen(!listOpen) : undefined}
         />
         <div className="desktop-body">
           <NavigationRail switcher={switcher} current={tab} />
@@ -316,10 +309,6 @@ function Topbar({
   panelOpen: boolean;
   onTogglePanel?: () => void;
 }) {
-  const live = tab === '/live';
-  const panel = live ? '实时弹幕' : '第二栏';
-  const action = panelOpen ? '收起' : '展开';
-
   return (
     <header className="topbar drag">
       <div className="window-rail-control">
@@ -327,13 +316,13 @@ function Topbar({
           variant="ghost"
           size="icon-sm"
           className="text-muted-foreground rounded-lg"
-          aria-label={`${action}${panel}`}
-          aria-controls={live ? 'live-danmaku' : 'workspace-list'}
+          aria-label={panelOpen ? '收起第二栏' : '展开第二栏'}
+          aria-controls={onTogglePanel ? 'workspace-list' : undefined}
           aria-expanded={panelOpen}
           disabled={!onTogglePanel}
           onClick={onTogglePanel}
         >
-          {live ? <PanelRight /> : <PanelLeft />}
+          <PanelLeft />
         </Button>
       </div>
       <WindowNav />
@@ -361,7 +350,7 @@ function ConversationTitle({ tab }: { tab: DesktopTab }) {
 }
 
 function LivePage() {
-  const { danmakuOpen, setDanmakuOpen } = useContext(shellContext);
+  const { danmakuOpen } = useContext(shellContext);
   const query = useConversations();
   const conversation = query.data?.find(item => item.mode === 'assistant');
 
@@ -379,17 +368,13 @@ function LivePage() {
     <div className="route-content live-page">
       <ResizablePanelGroup className="h-full" orientation="horizontal" id="herald-live">
         <ResizablePanel id="conversation" minSize="300px">
-          <ConversationBody conversation={conversation} />
+          <ConversationBody conversation={conversation} showDanmakuToggle />
         </ResizablePanel>
         {danmakuOpen && (
           <>
             <ResizableHandle className="workbench-divider" aria-label="调整实时弹幕宽度" />
             <ResizablePanel id="danmaku" defaultSize="260px" minSize="220px" maxSize="40%">
-              <DanmakuPanel
-                key={conversation.id}
-                conversationId={conversation.id}
-                onClose={() => setDanmakuOpen(false)}
-              />
+              <DanmakuPanel key={conversation.id} conversationId={conversation.id} />
             </ResizablePanel>
           </>
         )}
@@ -398,9 +383,38 @@ function LivePage() {
   );
 }
 
-function ConversationBody({ conversation }: { conversation: Conversation }) {
+function DanmakuToggle() {
+  const { danmakuOpen, setDanmakuOpen } = useContext(shellContext);
+  const label = danmakuOpen ? '收起实时弹幕' : '展开实时弹幕';
+
+  return (
+    <div className="flex shrink-0 justify-end px-2 pt-2">
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        className="text-muted-foreground rounded-lg"
+        aria-label={label}
+        title={label}
+        aria-expanded={danmakuOpen}
+        aria-controls={danmakuOpen ? 'live-danmaku' : undefined}
+        onClick={() => setDanmakuOpen(!danmakuOpen)}
+      >
+        <PanelRight />
+      </Button>
+    </div>
+  );
+}
+
+function ConversationBody({
+  conversation,
+  showDanmakuToggle,
+}: {
+  conversation: Conversation;
+  showDanmakuToggle?: boolean;
+}) {
   return (
     <main className="flex h-full min-w-0 flex-col" aria-label="会话内容">
+      {showDanmakuToggle && <DanmakuToggle />}
       <ReminderFailureCard
         conversationId={conversation.id}
         isAssistant={conversation.mode === 'assistant'}
@@ -902,17 +916,15 @@ function ChatSession({ id }: { id: string }) {
           inert={startOverlay.visible}
         >
           {centered && <h2 className="chat-welcome">今天想聊点什么？</h2>}
-          {send.isError && (
-            <p role="alert" className="error pointer-events-auto mx-auto max-w-3xl px-6">
-              {send.error.message}
-            </p>
-          )}
           <ChatComposer
             id={id}
             conversation={conversation}
             input={input}
             busy={send.isPending}
             locked={send.isPending || savingModel}
+            centered={centered}
+            sendError={send.error}
+            onDismissError={send.reset}
             onSend={message => send.mutateAsync(message)}
           />
         </div>

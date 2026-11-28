@@ -55,9 +55,14 @@ export function SearchableSelect({
           <ChevronDown className="text-muted-foreground" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-(--radix-popover-trigger-width) p-0" align="start">
+      <PopoverContent
+        className="w-(--radix-popover-trigger-width) overflow-hidden p-0"
+        align="start"
+      >
         <Command>
-          <CommandInput placeholder={searchPlaceholder} />
+          <div className="border-border border-b">
+            <CommandInput placeholder={searchPlaceholder} aria-label={searchPlaceholder} />
+          </div>
           <CommandList id={listId}>
             <CommandEmpty>{emptyText}</CommandEmpty>
             <CommandGroup>

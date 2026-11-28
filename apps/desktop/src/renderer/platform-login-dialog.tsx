@@ -1,6 +1,8 @@
 import type { LivePlatform } from '@herald/live';
-import { createElement, useEffect } from 'react';
+import { LoaderCircle } from 'lucide-react';
+import { createElement, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
+import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogContent,
@@ -57,13 +59,81 @@ export function PlatformLoginDialog({
           <DialogTitle>登录{platformLabels[platform]}</DialogTitle>
           <DialogDescription>请在官方页面完成登录</DialogDescription>
         </DialogHeader>
-        {createElement('webview', {
-          key: platform,
-          className: 'login-webview',
-          src: platformLogin[platform].url,
-          partition: webPartition,
-        })}
+        <PlatformLoginView key={platform} platform={platform} />
       </DialogContent>
     </Dialog>
+  );
+}
+
+function PlatformLoginView({ platform }: { platform: LivePlatform }) {
+  const view = useRef<Electron.WebviewTag>(null);
+  const [attempt, setAttempt] = useState(0);
+  const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+
+  useLayoutEffect(() => {
+    const node = view.current;
+
+    if (!node) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => setStatus('error'), 15000);
+
+    const ready = () => {
+      clearTimeout(timeout);
+      setStatus('ready');
+    };
+
+    const failed = (event: Electron.DidFailLoadEvent) => {
+      if (event.isMainFrame && event.errorCode !== -3) {
+        clearTimeout(timeout);
+        setStatus('error');
+      }
+    };
+
+    node.addEventListener('did-finish-load', ready);
+    node.addEventListener('did-fail-load', failed);
+
+    return () => {
+      clearTimeout(timeout);
+      node.removeEventListener('did-finish-load', ready);
+      node.removeEventListener('did-fail-load', failed);
+    };
+  }, [attempt]);
+
+  return (
+    <div className="login-webview-frame" data-platform={platform}>
+      {createElement('webview', {
+        key: attempt,
+        ref: view,
+        className: 'login-webview',
+        src: platformLogin[platform].url,
+        partition: webPartition,
+      })}
+      {status !== 'ready' && (
+        <div className="bg-popover text-muted-foreground absolute inset-0 grid place-content-center justify-items-center gap-2 text-sm">
+          {status === 'loading' ? (
+            <p role="status" className="flex items-center gap-2">
+              <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
+              正在打开官方登录页…
+            </p>
+          ) : (
+            <>
+              <p role="alert">无法打开官方登录页，请检查网络连接。</p>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setStatus('loading');
+                  setAttempt(current => current + 1);
+                }}
+              >
+                重新加载
+              </Button>
+            </>
+          )}
+        </div>
+      )}
+    </div>
   );
 }

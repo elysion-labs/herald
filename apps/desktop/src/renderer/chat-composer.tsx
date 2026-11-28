@@ -1,7 +1,10 @@
-import { ArrowUp, FileText, Plus, X } from 'lucide-react';
+import { ORPCError } from '@orpc/client';
+import { Link } from '@tanstack/react-router';
+import { ArrowUp, CircleAlert, FileText, Plus, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type { ClipboardEvent, DragEvent, RefObject } from 'react';
 
+import { Button } from '@/components/ui/button';
 import {
   InputGroup,
   InputGroupAddon,
@@ -74,6 +77,9 @@ export function ChatComposer({
   input,
   busy,
   locked,
+  centered,
+  sendError,
+  onDismissError,
   onSend,
   conversation,
 }: {
@@ -84,6 +90,9 @@ export function ChatComposer({
   busy: boolean;
   /** 发送或切换模型中：禁止提交。 */
   locked: boolean;
+  centered: boolean;
+  sendError: Error | null;
+  onDismissError: () => void;
   onSend: (message: ComposerMessage) => Promise<unknown>;
 }) {
   const { id: workspaceId } = useWorkspace();
@@ -104,6 +113,7 @@ export function ChatComposer({
   }
 
   const canSend = Boolean(text.trim() || drafts.length) && !locked;
+  const popupSide = centered ? 'bottom' : 'top';
 
   const latest = useRef(drafts);
 
@@ -160,7 +170,14 @@ export function ChatComposer({
     }
 
     setProblem(undefined);
-    const attachments = await Promise.all(drafts.map(draft => encode(draft.file)));
+
+    const attachments = await Promise.all(drafts.map(draft => encode(draft.file))).catch(() => {
+      setProblem('读取附件失败，请移除附件后重新添加。');
+    });
+
+    if (!attachments) {
+      return;
+    }
 
     try {
       await onSend({ text: text.trim(), attachments });
@@ -196,11 +213,14 @@ export function ChatComposer({
       onDragOver={event => event.preventDefault()}
       onDrop={drop}
     >
-      {problem && (
-        <p role="alert" className="error">
-          {problem}
-        </p>
+      {sendError && (
+        <ComposerNotice
+          message={sendError.message}
+          modelSettings={sendError instanceof ORPCError && sendError.code === 'PRECONDITION_FAILED'}
+          onDismiss={onDismissError}
+        />
       )}
+      {problem && <ComposerNotice message={problem} onDismiss={() => setProblem(undefined)} />}
       <InputGroup className="composer-box bg-surface has-[[data-slot=input-group-control]:focus-visible]:border-transparent has-[[data-slot=input-group-control]:focus-visible]:ring-0">
         {drafts.length > 0 && (
           <InputGroupAddon align="block-start" className="flex-wrap gap-1.5 pb-0">
@@ -259,26 +279,66 @@ export function ChatComposer({
           <QuickPrompts
             conversation={conversation}
             disabled={locked}
+            side={popupSide}
+            onProblem={setProblem}
             onSend={message => onSend({ text: message, attachments: [] })}
           />
-          <ChatModelControls id={id} disabled={busy} />
-          <span className="text-muted-foreground/60 ml-auto px-1 text-[11px] select-none max-sm:hidden">
-            Enter 发送 · Shift + Enter 换行
-          </span>
-          <ContextUsage id={id} />
-          <InputGroupButton
-            type="submit"
-            variant="default"
-            size="icon-sm"
-            className="rounded-full"
-            aria-label="发送"
-            disabled={!canSend}
-          >
-            <ArrowUp />
-          </InputGroupButton>
+          <ChatModelControls id={id} disabled={busy} side={popupSide} />
+          <div className="ml-auto flex items-center gap-1">
+            <ContextUsage id={id} side={popupSide} />
+            <InputGroupButton
+              type="submit"
+              variant="default"
+              size="icon-sm"
+              className="rounded-full"
+              aria-label="发送"
+              title="Enter 发送 · Shift + Enter 换行"
+              disabled={!canSend}
+            >
+              <ArrowUp />
+            </InputGroupButton>
+          </div>
         </InputGroupAddon>
       </InputGroup>
     </form>
+  );
+}
+
+function ComposerNotice({
+  message,
+  modelSettings,
+  onDismiss,
+}: {
+  message: string;
+  modelSettings?: boolean;
+  onDismiss: () => void;
+}) {
+  return (
+    <div className="composer-notice">
+      <CircleAlert className="size-4 shrink-0" aria-hidden="true" />
+      <p role="alert" className="min-w-0 flex-1 wrap-anywhere">
+        {message}
+      </p>
+      {modelSettings && (
+        <Link
+          to="/settings"
+          search={{ section: 'models' }}
+          className="shrink-0 underline underline-offset-3"
+        >
+          去设置
+        </Link>
+      )}
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-xs"
+        className="rounded-md"
+        aria-label="关闭提示"
+        onClick={onDismiss}
+      >
+        <X />
+      </Button>
+    </div>
   );
 }
 
