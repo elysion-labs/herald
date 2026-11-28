@@ -191,9 +191,14 @@ export function MemoryPage({
         {record ? (
           <MemoryPreview key={record.id} record={record} onRemoved={() => onSelect()} />
         ) : (
-          <p className="text-muted-foreground grid flex-1 place-items-center text-sm">
-            {total ? '选择左侧记忆查看详情' : '暂无记忆'}
-          </p>
+          <div className="text-muted-foreground grid flex-1 content-center justify-items-center gap-1 px-6 text-center text-sm">
+            <p>{total ? '选择左侧记忆查看详情' : '还没有记忆'}</p>
+            {!total && (
+              <p className="text-xs">
+                直播中助手会自动记下观众信息，也可以点左上角「录入记忆」手动添加。
+              </p>
+            )}
+          </div>
         )}
       </section>
     </>

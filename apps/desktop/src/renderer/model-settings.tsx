@@ -139,6 +139,7 @@ function PresetKeys({ providers }: { providers: Catalog['providers'] }) {
           <SearchableSelect
             id="model-provider"
             value={providerId}
+            placeholder="选择模型供应商"
             searchPlaceholder="搜索供应商"
             emptyText="没有匹配的供应商"
             options={providers.map(item => ({

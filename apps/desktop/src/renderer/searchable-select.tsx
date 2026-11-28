@@ -25,6 +25,7 @@ export function SearchableSelect({
   value,
   options,
   onChange,
+  placeholder = '请选择',
   searchPlaceholder = '搜索',
   emptyText = '没有匹配项',
 }: {
@@ -32,6 +33,7 @@ export function SearchableSelect({
   value: string;
   options: SearchableOption[];
   onChange: (value: string) => void;
+  placeholder?: string;
   searchPlaceholder?: string;
   emptyText?: string;
 }) {
@@ -51,7 +53,9 @@ export function SearchableSelect({
           aria-controls={listId}
           className="w-full justify-between font-normal"
         >
-          <span className="truncate">{selected?.label}</span>
+          <span className={selected ? 'truncate' : 'text-muted-foreground truncate'}>
+            {selected?.label ?? placeholder}
+          </span>
           <ChevronDown className="text-muted-foreground" />
         </Button>
       </PopoverTrigger>
