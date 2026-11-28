@@ -1,9 +1,19 @@
-import { createClient as createBilibiliClient } from '@elysionjs/blive-ws';
-import { createClient as createDouyinClient } from '@elysionjs/dylive-ws';
-import { parseCookie } from 'cookie';
-import { WebSocket } from 'ws';
+import { bilibiliAdapter } from './bilibili.ts';
+import { douyinAdapter } from './douyin.ts';
 
 export type LivePlatform = 'bilibili' | 'douyin';
+
+/** 观众身份信息，用于判断是否值得互动。 */
+export interface LiveViewer {
+  id: string | null;
+  name: string | null;
+  /** B 站粉丝牌 / 抖音粉丝团灯牌。 */
+  badge: { name: string; level: number } | null;
+  /** B 站大航海：1 总督、2 提督、3 舰长。 */
+  guardLevel: number | null;
+  /** B 站荣耀等级 / 抖音财富等级。 */
+  payLevel: number | null;
+}
 
 export interface LiveChatMessage {
   platform: LivePlatform;
@@ -12,94 +22,121 @@ export interface LiveChatMessage {
   deduplicationKey: string | null;
   authorId: string | null;
   authorName: string | null;
+  viewer: LiveViewer;
   text: string;
   receivedAt: number;
 }
 
-interface LiveChatOptions {
+interface ActivityBase {
   platform: LivePlatform;
+  roomId: string;
+  key: string | null;
+  viewer: LiveViewer;
+  receivedAt: number;
+}
+
+/** 弹幕以外的互动：礼物、醒目留言、上舰、进场、关注。金额统一为人民币元。 */
+export type LiveActivity = ActivityBase &
+  (
+    | { kind: 'gift'; giftName: string; count: number; value: number | null }
+    | { kind: 'superChat'; text: string; value: number }
+    | { kind: 'guard'; guardName: string; value: number }
+    | { kind: 'entry' }
+    | { kind: 'follow' }
+  );
+
+export interface LiveChatOptions {
   roomId: string;
   readCookie?: (signal: AbortSignal) => Promise<string | null>;
   onMessage: (message: LiveChatMessage) => void;
+  onActivity?: (activity: LiveActivity) => void;
   onError: (error: Error) => void;
 }
 
-export function createLiveChat({
-  platform,
-  roomId,
-  readCookie,
-  onMessage,
-  onError,
-}: LiveChatOptions) {
-  const room = roomId.trim();
+/** 直播间是否在播；unknown 表示暂时无法判断。 */
+export type LiveStatus = 'live' | 'offline' | 'unknown';
 
-  if (!/^[1-9]\d*$/.test(room)) {
-    throw new TypeError('Expected a numeric live room ID');
-  }
+/** 主播与直播间的公开资料，用于让 agent 了解当前绑定的直播间。 */
+export interface RoomProfile {
+  platform: LivePlatform;
+  roomId: string;
+  streamer: string | null;
+  streamerId: string | null;
+  title: string | null;
+  area: string | null;
+  tags: string[];
+  followers: number | null;
+  description: string | null;
+  live: LiveStatus;
+}
 
-  if (platform === 'bilibili') {
-    const numericRoomId = Number(room);
+/** 观众的公开主页资料。 */
+export interface ViewerProfile {
+  name: string | null;
+  sign: string | null;
+  level: number | null;
+  followers: number | null;
+  official: string | null;
+}
 
-    if (!Number.isSafeInteger(numericRoomId)) {
-      throw new RangeError('Bilibili room ID is outside the safe integer range');
-    }
+export type ActivityDetail = LiveActivity extends infer Item
+  ? Item extends ActivityBase
+    ? Omit<Item, keyof ActivityBase>
+    : never
+  : never;
 
-    const client = createBilibiliClient({
-      roomId: numericRoomId,
-      cookie: readCookie && (async signal => (await readCookie(signal)) ?? ''),
-      parseCookie,
-      createWebSocket: (url, options) => new WebSocket(url, options),
-      reconnect: { maxRetries: 3 },
-    });
+export type LiveCapability =
+  | 'danmaku'
+  | 'entry'
+  | 'gift'
+  | 'superChat'
+  | 'guard'
+  | 'viewerProfile'
+  | 'roomProfile'
+  | 'badgeLevel'
+  | 'payLevel'
+  | 'welcome';
 
-    client.on('error', onError);
-    client.on('event', event => {
-      if (event.type !== 'message') {
-        return;
-      }
+export interface LivePlatformInfo {
+  id: LivePlatform;
+  label: string;
+  capabilities: Readonly<Record<LiveCapability, boolean>>;
+}
 
-      onMessage({
-        platform,
-        roomId: event.roomId?.toString() ?? room,
-        sourceId: event.sourceId,
-        deduplicationKey: event.key,
-        authorId: event.user.id > 0 ? String(event.user.id) : null,
-        authorName: event.user.name,
-        text: event.content,
-        receivedAt: Date.now(),
-      });
-    });
+export interface LiveChat {
+  start: () => Promise<void>;
+  state: () =>
+    | 'idle'
+    | 'connecting'
+    | 'connected'
+    | 'reconnecting'
+    | 'stopped'
+    | 'failed'
+    | 'disposed';
+  dispose: () => Promise<void>;
+}
 
-    return {
-      start: () => client.start(),
-      state: () => client.getStatus().status,
-      dispose: () => client.dispose(),
-    };
-  }
+export interface RoomProfileOptions {
+  cookie?: string | null;
+  signal?: AbortSignal;
+}
 
-  const client = createDouyinClient({
-    roomId: room,
-    cookie: readCookie,
-    reconnect: { maxRetries: 3 },
-  });
+export interface LivePlatformAdapter extends LivePlatformInfo {
+  createChat: (options: LiveChatOptions) => LiveChat;
+  resolveRoomId?: (roomId: string, signal?: AbortSignal) => Promise<string>;
+  fetchRoomProfile: (roomId: string, options?: RoomProfileOptions) => Promise<RoomProfile>;
+  fetchViewerProfile?: (
+    viewerId: string,
+    options?: { signal?: AbortSignal },
+  ) => Promise<ViewerProfile | null>;
+}
 
-  client.on('error', onError);
-  client.on('event', event =>
-    onMessage({
-      platform,
-      roomId: event.roomId ?? room,
-      sourceId: event.id ?? null,
-      deduplicationKey: event.id ? `${event.roomId ?? room}:${event.id}` : null,
-      authorId: event.user.id ?? null,
-      authorName: event.user.name || null,
-      text: event.content,
-      receivedAt: Date.now(),
-    }),
-  );
+export const adapters: Readonly<Record<LivePlatform, LivePlatformAdapter>> = {
+  bilibili: bilibiliAdapter,
+  douyin: douyinAdapter,
+};
 
-  return {
-    start: () => client.start(),
-    state: () => client.getStatus().status,
-    dispose: () => client.dispose(),
-  };
+/** 这组平台中有任一平台支持该能力。 */
+export function supports(platforms: readonly LivePlatform[], capability: LiveCapability) {
+  return platforms.some(platform => adapters[platform].capabilities[capability]);
 }

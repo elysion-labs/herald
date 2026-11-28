@@ -3,9 +3,10 @@ import { EventEmitter, on } from 'node:events';
 import { isIP } from 'node:net';
 
 import type { BrowserContents, BrowserInteraction } from '@herald/browser-tool';
-import { nativeImage, session, WebContentsView } from 'electron';
+import { nativeImage, screen, session, WebContentsView } from 'electron';
 import type { BrowserWindow, Rectangle, WebContents } from 'electron';
 
+import { browserViewport } from '../shared/browser-preview.ts';
 import { webPartition } from '../shared/platforms.ts';
 import { showBrowserPointer } from './browser-pointer.ts';
 
@@ -88,9 +89,14 @@ export function createWorkspaceBrowser(window: BrowserWindow) {
 
   const events = new EventEmitter();
   const tabs = new Map<string, WebContentsView>();
+  /** agent 自己打开的标签页，运行结束后由调用方关闭。 */
+  const agentTabs = new Set<string>();
   const favicons = new Map<string, string>();
+  const scales = new WeakMap<WebContentsView, number>();
   let activeId: string | null = null;
   let bounds: Rectangle | undefined;
+  let pointerInside = false;
+  let pointerTimer: ReturnType<typeof setInterval> | undefined;
 
   function lookup(id?: string) {
     if (id !== undefined) {
@@ -128,11 +134,79 @@ export function createWorkspaceBrowser(window: BrowserWindow) {
       canGoBack: contents?.navigationHistory.canGoBack() ?? false,
       canGoForward: contents?.navigationHistory.canGoForward() ?? false,
       open: Boolean(contents),
+      pointerInside,
     };
   }
 
   function changed() {
     events.emit('change');
+  }
+
+  function setPointerInside(next: boolean) {
+    if (next !== pointerInside) {
+      pointerInside = next;
+      changed();
+    }
+  }
+
+  function checkPointer() {
+    const view = lookup();
+
+    if (!window.isFocused() || !view?.getVisible()) {
+      setPointerInside(false);
+
+      return;
+    }
+
+    const cursor = screen.getCursorScreenPoint();
+    const origin = window.getContentBounds();
+    const frame = view.getBounds();
+    const x = cursor.x - origin.x - frame.x;
+    const y = cursor.y - origin.y - frame.y;
+    setPointerInside(x >= 0 && y >= 0 && x < frame.width && y < frame.height);
+  }
+
+  function trackPointer(enabled: boolean) {
+    if (enabled) {
+      // 原生视图的位置可能在鼠标静止时改变，移入和移出事件无法覆盖这种情况。
+      pointerTimer ??= setInterval(checkPointer, 80);
+      checkPointer();
+
+      return;
+    }
+
+    clearInterval(pointerTimer);
+    pointerTimer = undefined;
+    setPointerInside(false);
+  }
+
+  function fitView(view: WebContentsView, frame: Rectangle) {
+    view.setBounds(frame);
+
+    // 空白标签页还没有可应用模拟参数的网页渲染视图。
+    if (!isWebUrl(view.webContents.getURL())) {
+      return;
+    }
+
+    const scale = Math.min(
+      frame.width / browserViewport.width,
+      frame.height / browserViewport.height,
+    );
+
+    if (scales.get(view) === scale) {
+      return;
+    }
+
+    // 保持网页的 CSS 视口固定，只缩放嵌入视图的输出与交互坐标。
+    view.webContents.enableDeviceEmulation({
+      screenPosition: 'desktop',
+      screenSize: browserViewport,
+      viewPosition: { x: 0, y: 0 },
+      deviceScaleFactor: 0,
+      viewSize: browserViewport,
+      scale,
+    });
+    scales.set(view, scale);
   }
 
   function syncBounds() {
@@ -144,12 +218,16 @@ export function createWorkspaceBrowser(window: BrowserWindow) {
     const area = bounds;
     const visible = area && area.x < width && area.y < height;
 
+    if (!visible) {
+      setPointerInside(false);
+    }
+
     for (const [id, view] of tabs) {
       const hasPage = isWebUrl(view.webContents.getURL()) || view.webContents.isLoading();
       view.setVisible(Boolean(visible && id === activeId && hasPage));
 
-      if (area && visible) {
-        view.setBounds({
+      if (id === activeId && area && visible) {
+        fitView(view, {
           ...area,
           width: Math.min(area.width, width - area.x),
           height: Math.min(area.height, height - area.y),
@@ -165,6 +243,7 @@ export function createWorkspaceBrowser(window: BrowserWindow) {
 
     lookup(id);
     activeId = id;
+    setPointerInside(false);
     syncBounds();
     changed();
   }
@@ -180,10 +259,12 @@ export function createWorkspaceBrowser(window: BrowserWindow) {
     const ids = [...tabs.keys()];
     const index = ids.indexOf(id);
     tabs.delete(id);
+    agentTabs.delete(id);
     favicons.delete(id);
 
     if (activeId === id) {
       activeId = ids[index + 1] ?? ids[index - 1] ?? null;
+      setPointerInside(false);
     }
 
     if (view && !window.isDestroyed()) {
@@ -209,6 +290,7 @@ export function createWorkspaceBrowser(window: BrowserWindow) {
     });
 
     view.setVisible(false);
+    view.setBorderRadius(9);
     window.contentView.addChildView(view);
     tabs.set(id, view);
 
@@ -245,6 +327,7 @@ export function createWorkspaceBrowser(window: BrowserWindow) {
     contents.on('did-stop-loading', pageChanged);
     contents.on('did-navigate', () => {
       favicons.delete(id);
+      scales.delete(view);
       pageChanged();
     });
     contents.on('did-navigate-in-page', changed);
@@ -298,7 +381,7 @@ export function createWorkspaceBrowser(window: BrowserWindow) {
     const { width, height } = view.getBounds();
 
     if (width < 1 || height < 1) {
-      throw new Error('网页预览尚未取得尺寸，请先打开主页中的预览。');
+      throw new Error('网页预览尚未取得尺寸，请先打开浏览器页或画中画。');
     }
 
     const url = contents.getURL();
@@ -314,6 +397,8 @@ export function createWorkspaceBrowser(window: BrowserWindow) {
       y: input.y * Math.max(0, viewport.clientHeight - 1),
     };
 
+    const scale = scales.get(view) ?? 1;
+
     if (input.action === 'click') {
       await showBrowserPointer(contents, point).catch(() => undefined);
     }
@@ -327,12 +412,17 @@ export function createWorkspaceBrowser(window: BrowserWindow) {
     }
 
     signal?.throwIfAborted();
-    await dispatchBrowserAction(devtools, input, point);
+    await dispatchBrowserAction(devtools, input, { x: point.x * scale, y: point.y * scale });
   }
 
   const webContents: BrowserContents = {
     list,
-    open: url => openTab(agentUrl(url)),
+    async open(url) {
+      const id = await openTab(agentUrl(url));
+      agentTabs.add(id);
+
+      return id;
+    },
     select,
     navigate: (url, id) => navigate(agentUrl(url), id),
     async snapshot(id) {
@@ -384,7 +474,10 @@ export function createWorkspaceBrowser(window: BrowserWindow) {
   };
 
   window.on('resize', syncBounds);
+  window.on('blur', () => setPointerInside(false));
   window.on('closed', () => {
+    trackPointer(false);
+
     for (const id of tabs.keys()) {
       close(id);
     }
@@ -394,6 +487,8 @@ export function createWorkspaceBrowser(window: BrowserWindow) {
 
   return {
     webContents,
+    /** 当前由 agent 打开且仍未关闭的标签页。 */
+    agentTabs: () => new Set(agentTabs),
     navigate,
     openTab,
     select,
@@ -411,9 +506,10 @@ export function createWorkspaceBrowser(window: BrowserWindow) {
         await updates.return?.();
       }
     },
-    setBounds(next: Rectangle | undefined) {
+    setBounds(next: Rectangle | undefined, pictureInPicture: boolean) {
       bounds = next;
       syncBounds();
+      trackPointer(Boolean(next && pictureInPicture));
     },
     back() {
       const history = lookup()?.webContents.navigationHistory;

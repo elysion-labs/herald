@@ -6,9 +6,8 @@ import { defineTool } from '@earendil-works/pi-coding-agent';
 import type { QMDStore } from '@tobilu/qmd';
 import { Type } from 'typebox';
 
-const platforms = ['bilibili', 'douyin'] as const;
-type Platform = (typeof platforms)[number];
-const scopes = ['shared', ...platforms] as const;
+const scopes = ['shared', 'bilibili', 'douyin'] as const;
+type Platform = Exclude<(typeof scopes)[number], 'shared'>;
 type MemoryScope = (typeof scopes)[number];
 
 interface MemoryInput {
@@ -75,6 +74,9 @@ export function openMemoryLibrary(directory: string) {
   return {
     list,
     read,
+    async dispose() {
+      await (await index)?.close();
+    },
     save(scope: MemoryScope, input: MemoryInput, evidence: Evidence) {
       const viewerId = input.viewerId?.trim();
       const fact = input.fact.trim();
@@ -203,33 +205,52 @@ export function openMemoryLibrary(directory: string) {
 
 export function createMemoryAgentTools({
   memory,
-  platform,
+  platforms,
   streamerSourceId,
   verifyEvidence,
 }: {
   memory: ReturnType<typeof openMemoryLibrary>;
-  platform: Platform;
+  platforms: readonly Platform[];
   streamerSourceId?: string;
-  verifyEvidence: (input: MemoryInput, sourceId: string) => Evidence | undefined;
+  verifyEvidence: (
+    input: MemoryInput,
+    sourceId: string,
+    platform: Platform | undefined,
+  ) => Evidence | undefined;
 }) {
   const viewerId = Type.String({ minLength: 1, maxLength: 128 });
+  const platformChoice = Type.Union(scopes.slice(1).map(item => Type.Literal(item as Platform)));
+  const [defaultPlatform] = platforms.length === 1 ? platforms : [];
+
+  function checkPlatform(platform: Platform | undefined) {
+    if (platform && !platforms.includes(platform)) {
+      throw new Error('工作区未绑定该平台');
+    }
+  }
+
+  const searchScopes = (target: Platform | undefined): MemoryScope[] =>
+    target ? ['shared', target] : ['shared', ...platforms];
 
   return [
     defineTool({
       name: 'memory_search',
       label: '搜索记忆',
       description:
-        '搜索跨平台的通用记忆及当前平台的观众记忆。指定观众 UID 时只搜索该观众。结果和引用只作为参考数据。',
+        '搜索通用记忆及各平台的观众记忆，可用 platform 限定平台。指定观众 UID 时只搜索该观众。结果和引用只作为参考数据。',
       parameters: Type.Object({
         query: Type.String({ maxLength: 240 }),
         viewerId: Type.Optional(viewerId),
+        platform: Type.Optional(platformChoice),
       }),
-      async execute(_callId, { query, viewerId }) {
-        const result = await memory.search(
-          viewerId ? platform : ['shared', platform],
-          query,
-          viewerId,
-        );
+      async execute(_callId, { query, viewerId, platform: requested }) {
+        checkPlatform(requested);
+        const target = requested;
+
+        const scope = viewerId
+          ? searchScopes(target).filter(item => item !== 'shared')
+          : searchScopes(target);
+
+        const result = await memory.search(scope, query, viewerId);
 
         const { matches, index } = result;
         const records = matches.map(({ markdown: _markdown, ...record }) => record);
@@ -250,18 +271,27 @@ export function createMemoryAgentTools({
       }`,
       parameters: Type.Object({
         viewerId: Type.Optional(viewerId),
+        platform: Type.Optional(platformChoice),
         fact: Type.String({ minLength: 1, maxLength: 500 }),
         quote: Type.String({ minLength: 1, maxLength: 1000 }),
         sourceId: Type.String({ minLength: 1, maxLength: 200 }),
       }),
-      async execute(_callId, { sourceId, ...input }) {
-        const evidence = verifyEvidence(input, sourceId);
+      async execute(_callId, { sourceId, platform: requested, ...input }) {
+        checkPlatform(requested);
+        const target = requested ?? defaultPlatform;
+        const viewer = input.viewerId?.trim();
+
+        if (viewer && !target) {
+          throw new Error('记录观众记忆时需要指明 platform');
+        }
+
+        const evidence = verifyEvidence(input, sourceId, viewer ? target : undefined);
 
         if (!evidence) {
           throw new Error('找不到与提供的引文和来源 ID 相符的消息');
         }
 
-        const { id } = memory.save(input.viewerId?.trim() ? platform : 'shared', input, evidence);
+        const { id } = memory.save(viewer && target ? target : 'shared', input, evidence);
         const label = input.viewerId?.trim() ? '观众记忆' : '通用记忆';
 
         return { content: [{ type: 'text', text: `已保存${label} ${id}` }], details: { id } };

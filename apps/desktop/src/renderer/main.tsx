@@ -12,52 +12,42 @@ import {
   createRootRoute,
   createRoute,
   createRouter,
-  Link,
+  Navigate,
   Outlet,
   RouterProvider,
   useLocation,
   useNavigate,
+  useRouter,
 } from '@tanstack/react-router';
-import Folder from 'kubai-icons-react/icons/folder';
-import HomeIcon from 'kubai-icons-react/icons/home';
-import MemoryIcon from 'kubai-icons-react/icons/notebook';
-import SettingsIcon from 'kubai-icons-react/icons/sliders';
+import Lightbulb from 'kubai-icons-react/icons/lightbulb';
+import Messages from 'kubai-icons-react/icons/messages';
+import SkillsIcon from 'kubai-icons-react/icons/sparkles';
+import Tv from 'kubai-icons-react/icons/tv';
 import {
-  ArrowUp,
-  ChevronDown,
+  ArrowLeft,
+  ArrowRight,
   CircleCheck,
   CircleX,
   LoaderCircle,
-  MessageCircle,
+  PanelLeft,
+  PanelRight,
   Plus,
   Terminal,
+  X,
 } from 'lucide-react';
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { useDefaultLayout } from 'react-resizable-panels';
 
 import { Bubble, BubbleContent } from '@/components/ui/bubble';
 import { Button } from '@/components/ui/button';
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
-import {
   Empty,
+  EmptyContent,
   EmptyDescription,
   EmptyHeader,
   EmptyMedia,
   EmptyTitle,
 } from '@/components/ui/empty';
-import {
-  InputGroup,
-  InputGroupAddon,
-  InputGroupButton,
-  InputGroupTextarea,
-} from '@/components/ui/input-group';
 import { Message, MessageContent } from '@/components/ui/message';
 import {
   MessageScroller,
@@ -78,39 +68,119 @@ import {
   TraceTitle,
 } from '@/components/ui/trace';
 
-import { platformLabels, platforms } from '../shared/platforms.ts';
+import { attachmentPattern } from '../shared/attachments.ts';
+import { AssistantReminders, LiveControl, StartLiveOverlay } from './assistant-mode.tsx';
+import type { Conversation } from './assistant-mode.tsx';
 import { BrowserPane } from './browser-pane.tsx';
-import { chatModelKey, ChatModelControls } from './chat-model-controls.tsx';
+import { AttachmentChip, ChatComposer } from './chat-composer.tsx';
+import type { ComposerMessage } from './chat-composer.tsx';
+import { ChatMarkdown } from './chat-markdown.tsx';
+import { chatModelKey } from './chat-model-controls.tsx';
+import { usageKey } from './context-usage.tsx';
+import { DanmakuPanel } from './danmaku-panel.tsx';
 import { kubaiMixed } from './kubai-colors.ts';
-import { MemoryPage } from './memory-page.tsx';
-import { ModelSettings } from './model-settings.tsx';
-import { PlatformIcon } from './platform-icon.tsx';
+import { PlatformIcons } from './live-status.tsx';
+import { MemoryPage, memorySearch } from './memory-page.tsx';
+import { desktopTab, NavigationRail } from './navigation-rail.tsx';
+import type { DesktopTab } from './navigation-rail.tsx';
 import { PlatformLoginDialog } from './platform-login-dialog.tsx';
-import { platformAccountKey, PlatformSettings } from './platform-settings.tsx';
+import { platformAccountKey } from './platform-settings.tsx';
+import {
+  ReminderFailureCard,
+  ReminderItem,
+  ReminderProvider,
+  useLiveReminder,
+} from './reminders.tsx';
+import type { LiveReminder } from './reminders.tsx';
 import { rpc } from './rpc.ts';
+import { filterSessions, SessionList, sessionSearch } from './session-list.tsx';
+import { SettingsPage, settingsSearch } from './settings-page.tsx';
+import {
+  conversationsKey,
+  useConversations,
+  useWorkspace,
+  WorkspaceContext,
+  workspaceKey,
+  workspaceListQuery,
+} from './workspace-context.ts';
+import { WorkspaceSwitcher } from './workspace-switcher.tsx';
 
 import './style.css';
 
-const conversationsQuery = { queryKey: ['conversations'], queryFn: () => rpc.conversations.list() };
-const activeChatKey = 'herald-active-chat';
-type Conversations = Awaited<ReturnType<typeof rpc.conversations.list>>;
+const activeWorkspaceKey = 'herald-active-workspace';
+const activeChatKey = (id: string) => `herald-active-chat:${id}`;
 type LiveReplies =
   Awaited<ReturnType<typeof rpc.conversations.send>> extends AsyncIterable<infer Replies>
     ? Replies
     : never;
 
-function preferredConversation(conversations?: Conversations) {
-  const active = sessionStorage.getItem(activeChatKey);
+const skills = [
+  { id: 'find-live-topic', label: '找直播话题', icon: Lightbulb, color: kubaiMixed.lightbulb },
+  { id: 'find-trending-videos', label: '找热门视频', icon: Tv, color: kubaiMixed.tv },
+] as const;
 
-  return conversations?.find(item => item.id === active) ?? conversations?.[0];
+function useCurrentConversation() {
+  const { data } = useConversations();
+  const pathname = useLocation({ select: location => location.pathname });
+  const tab = desktopTab(pathname);
+
+  if (tab === '/live') {
+    return data?.find(item => item.mode === 'assistant');
+  }
+
+  return data?.find(item => pathname === `/chat/${item.id}`);
 }
 
-const platformContext = createContext<(platform: LivePlatform, trigger: HTMLButtonElement) => void>(
-  () => undefined,
-);
+function useStoredFlag(key: string, initial: boolean) {
+  const [value, setValue] = useState(() => {
+    const stored = localStorage.getItem(key);
 
-function Workspace() {
+    return stored === null ? initial : stored === 'true';
+  });
+
+  useEffect(() => {
+    localStorage.setItem(key, String(value));
+  }, [key, value]);
+
+  return [value, setValue] as const;
+}
+
+function useCreateConversation() {
+  const { id: workspaceId } = useWorkspace();
+  const queryClient = useQueryClient();
+  const navigate = useNavigate();
+
+  return useMutation({
+    mutationFn: () => rpc.conversations.create({ workspaceId }),
+    async onSuccess(conversation) {
+      await queryClient.invalidateQueries({ queryKey: conversationsKey(workspaceId) });
+
+      if (localStorage.getItem(activeWorkspaceKey) === workspaceId) {
+        await navigate({ to: '/chat/$id', params: { id: conversation.id }, search: {} });
+      }
+    },
+  });
+}
+
+interface Shell {
+  danmakuOpen: boolean;
+  setDanmakuOpen: (open: boolean) => void;
+  openLogin: (platform: LivePlatform, trigger: HTMLButtonElement) => void;
+}
+
+const shellContext = createContext<Shell>({
+  danmakuOpen: true,
+  setDanmakuOpen: () => undefined,
+  openLogin: () => undefined,
+});
+
+function WorkspaceShell({ switcher }: { switcher: React.ReactNode }) {
   const client = useQueryClient();
+  const tab = useLocation({ select: location => desktopTab(location.pathname) });
+  const hasList = tab === '/chat' || tab === '/memory' || tab === '/settings';
+  const [listOpen, setListOpen] = useStoredFlag('herald-list-open', true);
+  const [browserOpen, setBrowserOpen] = useStoredFlag('herald-browser-open', false);
+  const [danmakuOpen, setDanmakuOpen] = useStoredFlag('herald-live-danmaku-open', true);
 
   const [login, setLogin] = useState<{
     platform: LivePlatform;
@@ -118,287 +188,547 @@ function Workspace() {
     open: boolean;
   }>();
 
-  const pathname = useLocation({ select: location => location.pathname });
-  const homeActive = pathname === '/' || pathname.startsWith('/chat/');
+  const shell: Shell = {
+    danmakuOpen,
+    setDanmakuOpen,
+    openLogin: (platform, trigger) => setLogin({ platform, trigger, open: true }),
+  };
 
   return (
-    <div className="desktop">
-      <header className="titlebar">
-        <span className="wordmark">Herald</span>
-      </header>
-      <div className="workbench">
-        <nav className="sidebar-rail" aria-label="页面">
-          <Button asChild size="icon-lg" variant="ghost" className="rail-link size-10 rounded-lg">
-            <Link
-              to="/"
-              aria-label="主页"
-              title="主页"
-              data-current={homeActive}
-              aria-current={homeActive ? 'page' : undefined}
-            >
-              <HomeIcon
-                className="size-[22px]"
-                color={kubaiMixed.home}
-                trigger="parent"
-                aria-hidden="true"
-              />
-            </Link>
-          </Button>
-          <Button asChild size="icon-lg" variant="ghost" className="rail-link size-10 rounded-lg">
-            <Link to="/memory" aria-label="记忆" title="记忆" data-current={pathname === '/memory'}>
-              <MemoryIcon
-                className="size-[22px]"
-                color={kubaiMixed.notebook}
-                trigger="parent"
-                aria-hidden="true"
-              />
-            </Link>
-          </Button>
-          <Button asChild size="icon-lg" variant="ghost" className="rail-link size-10 rounded-lg">
-            <Link
-              to="/settings"
-              aria-label="设置"
-              title="设置"
-              data-current={pathname === '/settings'}
-            >
-              <SettingsIcon
-                className="size-[22px]"
-                color={kubaiMixed.sliders}
-                trigger="parent"
-                aria-hidden="true"
-              />
-            </Link>
-          </Button>
-        </nav>
-        <div className="min-h-0 min-w-0 flex-1">
-          <platformContext.Provider
-            value={(platform, trigger) => setLogin({ platform, trigger, open: true })}
-          >
-            <Outlet />
-          </platformContext.Provider>
-        </div>
-      </div>
-      {login && (
-        <PlatformLoginDialog
-          platform={login.platform}
-          open={login.open}
-          trigger={login.trigger}
-          onClose={() => {
-            setLogin({ ...login, open: false });
-            void client.invalidateQueries({ queryKey: [...platformAccountKey, login.platform] });
-          }}
-          onExited={() => setLogin(undefined)}
+    <shellContext.Provider value={shell}>
+      <div className="desktop">
+        <Topbar
+          tab={tab}
+          panelOpen={hasList && listOpen}
+          onTogglePanel={hasList ? () => setListOpen(!listOpen) : undefined}
         />
-      )}
+        <div className="desktop-body">
+          <NavigationRail switcher={switcher} current={tab} />
+          <div className="stage" data-list={hasList && listOpen}>
+            <Outlet />
+            <div className="workspace-browser-layer">
+              <BrowserPane
+                open={browserOpen}
+                full={tab === '/browser'}
+                onOpenChange={setBrowserOpen}
+              />
+            </div>
+          </div>
+        </div>
+        {login && (
+          <PlatformLoginDialog
+            platform={login.platform}
+            open={login.open}
+            trigger={login.trigger}
+            onClose={() => {
+              setLogin({ ...login, open: false });
+              void client.invalidateQueries({ queryKey: [...platformAccountKey, login.platform] });
+            }}
+            onExited={() => setLogin(undefined)}
+          />
+        )}
+      </div>
+    </shellContext.Provider>
+  );
+}
+
+/** 跟踪 hash 历史的当前位置与可前进的上限，用于启用 / 禁用前进后退。 */
+function useHistoryPosition() {
+  const router = useRouter();
+
+  const [position, setPosition] = useState(() => {
+    const index = router.history.location.state.__TSR_index;
+
+    return { index, top: index };
+  });
+
+  useEffect(
+    () =>
+      router.history.subscribe(({ location, action }) => {
+        const index = location.state.__TSR_index;
+
+        setPosition(previous => ({
+          index,
+          top: action.type === 'PUSH' ? index : Math.max(previous.top, index),
+        }));
+      }),
+    [router],
+  );
+
+  return {
+    canBack: position.index > 0,
+    canForward: position.index < position.top,
+    back: () => router.history.back(),
+    forward: () => router.history.forward(),
+  };
+}
+
+function WindowNav() {
+  const history = useHistoryPosition();
+
+  return (
+    <div className="window-nav">
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        className="rounded-lg"
+        aria-label="后退页面"
+        disabled={!history.canBack}
+        onClick={history.back}
+      >
+        <ArrowLeft />
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        className="rounded-lg"
+        aria-label="前进页面"
+        disabled={!history.canForward}
+        onClick={history.forward}
+      >
+        <ArrowRight />
+      </Button>
     </div>
   );
 }
 
-function HomeLayout() {
-  const { defaultLayout, onLayoutChanged } = useDefaultLayout({
-    id: 'herald-home-workbench',
-    storage: sessionStorage,
-    onlySaveAfterUserInteractions: true,
-  });
+const pageTitles: Record<DesktopTab, string> = {
+  '/live': '直播',
+  '/chat': '会话',
+  '/browser': '浏览器',
+  '/memory': '记忆',
+  '/settings': '设置',
+};
 
+function Topbar({
+  tab,
+  panelOpen,
+  onTogglePanel,
+}: {
+  tab: DesktopTab;
+  panelOpen: boolean;
+  onTogglePanel?: () => void;
+}) {
   return (
-    <ResizablePanelGroup
-      className="h-full"
-      orientation="horizontal"
-      id="herald-home-workbench"
-      defaultLayout={defaultLayout}
-      onLayoutChanged={onLayoutChanged}
-    >
-      <ResizablePanel id="sessions" defaultSize="17%" minSize="160px" maxSize="32%">
-        <SessionSidebar />
-      </ResizablePanel>
-      <ResizableHandle className="workbench-divider" aria-label="调整会话侧栏宽度" />
-      <ResizablePanel id="conversation" defaultSize="53%" minSize="320px">
-        <main className="center">
-          <Outlet />
-        </main>
-      </ResizablePanel>
-      <ResizableHandle className="workbench-divider" aria-label="调整网页预览宽度" />
-      <ResizablePanel id="browser" defaultSize="30%" minSize="295px" maxSize="57%">
-        <BrowserPane />
-      </ResizablePanel>
-    </ResizablePanelGroup>
-  );
-}
-
-function SessionSidebar() {
-  const { data: conversations } = useQuery(conversationsQuery);
-  const current = preferredConversation(conversations);
-  const queryClient = useQueryClient();
-  const navigate = useNavigate();
-  const pathname = useLocation({ select: location => location.pathname });
-
-  const create = useMutation({
-    mutationFn: (platform: LivePlatform) => rpc.conversations.create(platform),
-    async onSuccess(conversation) {
-      await queryClient.invalidateQueries(conversationsQuery);
-      await navigate({ to: '/chat/$id', params: { id: conversation.id } });
-    },
-  });
-
-  return (
-    <aside className="sidebar" aria-label="直播会话">
-      <div className="sidebar-body">
-        <div className="sidebar-top">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                className="w-full justify-start"
-                variant="outline"
-                size="lg"
-                disabled={create.isPending}
-              >
-                <Plus data-icon="inline-start" /> 新建会话{' '}
-                <ChevronDown className="ml-auto" data-icon="inline-end" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent
-              className="workspace-dropdown"
-              side="bottom"
-              align="start"
-              sideOffset={6}
-            >
-              <DropdownMenuGroup>
-                {platforms.map(item => (
-                  <DropdownMenuItem key={item} onSelect={() => create.mutate(item)}>
-                    <PlatformIcon platform={item} size={16} /> {platformLabels[item]}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuGroup>
-            </DropdownMenuContent>
-          </DropdownMenu>
-          {create.isError && (
-            <p role="alert" className="error">
-              {create.error.message}
-            </p>
-          )}
-        </div>
-        <div className="sidebar-list">
-          <h2>会话</h2>
-          {conversations?.map(item => (
-            <Link
-              className="conversation-link"
-              aria-label={`${item.title} · ${platformLabels[item.platform]}`}
-              data-selected={pathname === '/' && item.id === current?.id}
-              key={item.id}
-              to="/chat/$id"
-              params={{ id: item.id }}
-            >
-              <PlatformIcon platform={item.platform} />
-              <span className="truncate">{item.title}</span>
-            </Link>
-          ))}
-        </div>
+    <header className="topbar drag">
+      <div className="window-rail-control">
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          className="text-muted-foreground rounded-lg"
+          aria-label={panelOpen ? '收起第二栏' : '展开第二栏'}
+          aria-controls={onTogglePanel ? 'workspace-list' : undefined}
+          aria-expanded={panelOpen}
+          disabled={!onTogglePanel}
+          onClick={onTogglePanel}
+        >
+          <PanelLeft />
+        </Button>
       </div>
-    </aside>
+      <WindowNav />
+      <ConversationTitle tab={tab} />
+    </header>
   );
 }
 
-function Home() {
-  const { data: conversations, error, isPending } = useQuery(conversationsQuery);
-  const current = preferredConversation(conversations);
+function ConversationTitle({ tab }: { tab: DesktopTab }) {
+  const conversation = useCurrentConversation();
 
-  if (current) {
-    return <ChatSession key={current.id} id={current.id} />;
+  if (!conversation) {
+    return <h1 className="text-sm font-medium">{pageTitles[tab]}</h1>;
   }
 
-  const emptyTitle = isPending ? '正在读取会话' : '开始直播会话';
+  return (
+    <div key={conversation.id} className="topbar-title flex min-w-0 items-center gap-2.5">
+      {conversation.mode === 'chat' && (
+        <PlatformIcons platforms={conversation.livePlatforms} size={16} />
+      )}
+      <h1 className="truncate text-sm font-medium">{conversation.title}</h1>
+      {conversation.mode === 'assistant' && <LiveControl conversation={conversation} />}
+    </div>
+  );
+}
+
+function LivePage() {
+  const { danmakuOpen } = useContext(shellContext);
+  const query = useConversations();
+  const conversation = query.data?.find(item => item.mode === 'assistant');
+
+  if (!conversation) {
+    return (
+      <main className="route-content page">
+        <p role={query.error ? 'alert' : 'status'} className="text-muted-foreground text-sm">
+          {query.error?.message ?? '正在读取直播助手…'}
+        </p>
+      </main>
+    );
+  }
 
   return (
-    <Empty className="surface-enter">
+    <div className="route-content live-page">
+      <ResizablePanelGroup className="h-full" orientation="horizontal" id="herald-live">
+        <ResizablePanel id="conversation" minSize="300px">
+          <ConversationBody conversation={conversation} showDanmakuToggle />
+        </ResizablePanel>
+        {danmakuOpen && (
+          <>
+            <ResizableHandle className="workbench-divider" aria-label="调整实时弹幕宽度" />
+            <ResizablePanel id="danmaku" defaultSize="260px" minSize="220px" maxSize="40%">
+              <DanmakuPanel key={conversation.id} conversationId={conversation.id} />
+            </ResizablePanel>
+          </>
+        )}
+      </ResizablePanelGroup>
+    </div>
+  );
+}
+
+function DanmakuToggle() {
+  const { danmakuOpen, setDanmakuOpen } = useContext(shellContext);
+  const label = danmakuOpen ? '收起实时弹幕' : '展开实时弹幕';
+
+  return (
+    <div className="flex shrink-0 justify-end px-2 pt-2">
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        className="text-muted-foreground rounded-lg"
+        aria-label={label}
+        title={label}
+        aria-expanded={danmakuOpen}
+        aria-controls={danmakuOpen ? 'live-danmaku' : undefined}
+        onClick={() => setDanmakuOpen(!danmakuOpen)}
+      >
+        <PanelRight />
+      </Button>
+    </div>
+  );
+}
+
+function ConversationBody({
+  conversation,
+  showDanmakuToggle,
+}: {
+  conversation: Conversation;
+  showDanmakuToggle?: boolean;
+}) {
+  return (
+    <main className="flex h-full min-w-0 flex-col" aria-label="会话内容">
+      {showDanmakuToggle && <DanmakuToggle />}
+      <ReminderFailureCard
+        conversationId={conversation.id}
+        isAssistant={conversation.mode === 'assistant'}
+      />
+      {conversation.mode === 'chat' && conversation.liveStartedAt && (
+        <div className="mx-auto w-full max-w-3xl">
+          <AssistantReminders conversationId={conversation.id} />
+        </div>
+      )}
+      <div className="relative min-h-0 flex-1">
+        <ChatSession key={conversation.id} id={conversation.id} />
+      </div>
+    </main>
+  );
+}
+
+function ChatLayout() {
+  const query = useConversations();
+  const search = chatLayoutRoute.useSearch();
+  const create = useCreateConversation();
+
+  return (
+    <>
+      <SessionList
+        conversations={filterSessions(query.data, search)}
+        search={search}
+        error={create.error ?? query.error}
+        create={() => create.mutate()}
+        creating={create.isPending}
+      />
+      <div className="route-content">
+        <Outlet />
+      </div>
+    </>
+  );
+}
+
+function ChatHome() {
+  const { id: workspaceId } = useWorkspace();
+  const query = useConversations();
+  const search = chatLayoutRoute.useSearch();
+  const chats = filterSessions(query.data, search);
+  const stored = sessionStorage.getItem(activeChatKey(workspaceId));
+  const selected = chats?.find(item => item.id === stored) ?? chats?.[0];
+
+  if (selected) {
+    return <Navigate to="/chat/$id" params={{ id: selected.id }} search={search} replace />;
+  }
+
+  if (!query.isSuccess) {
+    return (
+      <p role={query.error ? 'alert' : 'status'} className="text-muted-foreground p-6 text-sm">
+        {query.error?.message ?? '正在读取会话…'}
+      </p>
+    );
+  }
+
+  return <EmptySessions archivedOnly={search.filter === 'live'} />;
+}
+
+function EmptySessions({ archivedOnly }: { archivedOnly: boolean }) {
+  const create = useCreateConversation();
+
+  return (
+    <Empty className="surface-enter h-full">
       <EmptyHeader>
         <EmptyMedia>
-          <Folder size={38} color={kubaiMixed.folder} aria-hidden="true" />
+          <Messages size={32} color={kubaiMixed.empty} aria-hidden="true" />
         </EmptyMedia>
-        <EmptyTitle role="heading" aria-level={1}>
-          {error ? '无法读取会话' : emptyTitle}
+        <EmptyTitle role="heading" aria-level={2}>
+          {archivedOnly ? '暂无往期直播' : '开始一段对话'}
         </EmptyTitle>
-        {(!isPending || error) && (
-          <EmptyDescription>{error?.message ?? '从左侧新建会话并选择直播平台'}</EmptyDescription>
-        )}
+        <EmptyDescription>
+          {archivedOnly ? '下播后，本场会话会归档到这里。' : '新建会话，向 Herald 提问。'}
+        </EmptyDescription>
       </EmptyHeader>
+      {!archivedOnly && (
+        <EmptyContent>
+          <Button variant="outline" disabled={create.isPending} onClick={() => create.mutate()}>
+            <Plus data-icon="inline-start" />
+            新建会话
+          </Button>
+        </EmptyContent>
+      )}
+      {create.error && (
+        <p role="alert" className="error">
+          {create.error.message}
+        </p>
+      )}
     </Empty>
   );
 }
 
 function Chat() {
   const { id } = chatRoute.useParams();
+  const { id: workspaceId } = useWorkspace();
+  const search = chatLayoutRoute.useSearch();
+  const query = useConversations();
+  const conversation = query.data?.find(item => item.id === id);
+  const isChat = conversation?.mode === 'chat';
 
   useEffect(() => {
-    sessionStorage.setItem(activeChatKey, id);
-  }, [id]);
+    if (isChat) {
+      sessionStorage.setItem(activeChatKey(workspaceId), id);
+    }
+  }, [isChat, id, workspaceId]);
 
-  return <ChatSession key={id} id={id} />;
+  if (!query.isSuccess) {
+    return (
+      <p role={query.error ? 'alert' : 'status'} className="text-muted-foreground p-6 text-sm">
+        {query.error?.message ?? '正在读取会话…'}
+      </p>
+    );
+  }
+
+  if (!conversation) {
+    return <Navigate to="/chat" search={search} replace />;
+  }
+
+  return isChat ? (
+    <ConversationBody conversation={conversation} />
+  ) : (
+    <Navigate to="/live" replace />
+  );
+}
+
+const skillById = new Map<string, (typeof skills)[number]>(skills.map(item => [item.id, item]));
+const expandedSkill = /^<skill name="([^"]+)"[^>]*>[\s\S]*?\n<\/skill>(?:\n\n|$)/;
+const commandSkill = /^\/skill:(\S+)(?:\s+|$)/;
+
+/**
+ * pi 会把 `/skill:名称 正文` 展开成 `<skill name="…" location="…">…</skill>\n\n正文` 存进历史；
+ * 发送中的消息仍是原始命令。两种形式都只保留技能名与用户正文。
+ */
+function parseSkillMessage(text: string) {
+  const names: string[] = [];
+  let body = text;
+
+  for (
+    let match = expandedSkill.exec(body) ?? commandSkill.exec(body);
+    match;
+    match = expandedSkill.exec(body) ?? commandSkill.exec(body)
+  ) {
+    names.push(match[1]);
+    body = body.slice(match[0].length);
+  }
+
+  return { skills: names, body };
+}
+
+function SkillTag({ skill, onRemove }: { skill: string; onRemove?: () => void }) {
+  const info = skillById.get(skill);
+  const Icon = info?.icon;
+
+  return (
+    <span className="skill-tag bg-secondary text-foreground/90 inline-flex h-6 w-fit items-center gap-1 rounded-full pr-1 pl-1.5 text-xs">
+      {Icon ? <Icon size={14} color={info.color} /> : <SkillsIcon size={14} />}
+      {info?.label ?? skill}
+      {onRemove ? (
+        <button
+          type="button"
+          className="text-muted-foreground hover:text-foreground hover:bg-background/60 grid size-4 place-items-center rounded-full transition-colors"
+          aria-label="移除技能"
+          onClick={onRemove}
+        >
+          <X className="size-3" />
+        </button>
+      ) : (
+        <span className="w-1" />
+      )}
+    </span>
+  );
+}
+
+function UserText({ text, images, files }: { text: string; images: string[]; files: string[] }) {
+  const { skills: used, body: withFiles } = parseSkillMessage(text);
+  const attached = [...files, ...[...withFiles.matchAll(attachmentPattern)].map(match => match[1])];
+  const body = withFiles.replace(attachmentPattern, '').trim();
+
+  return (
+    <div className="flex flex-col items-end gap-1.5">
+      {used.length > 0 && (
+        <div className="flex flex-wrap justify-end gap-1">
+          {used.map(skill => (
+            <SkillTag key={skill} skill={skill} />
+          ))}
+        </div>
+      )}
+      {images.length > 0 && (
+        <div className="flex flex-wrap justify-end gap-1.5">
+          {images.map((source, index) => (
+            <img
+              key={index}
+              src={source}
+              alt=""
+              className="border-border max-h-40 max-w-60 rounded-xl border object-cover"
+            />
+          ))}
+        </div>
+      )}
+      {attached.length > 0 && (
+        <div className="flex flex-wrap justify-end gap-1">
+          {attached.map((name, index) => (
+            <AttachmentChip key={`${name}-${index}`} name={name} />
+          ))}
+        </div>
+      )}
+      {body && (
+        <Bubble align="end" variant="muted">
+          <BubbleContent className="leading-relaxed whitespace-pre-wrap">{body}</BubbleContent>
+        </Bubble>
+      )}
+    </div>
+  );
 }
 
 function ChatTurn({
   role,
   text,
   traces = [],
+  streaming = false,
+  images = [],
+  files = [],
 }: {
   role: 'user' | 'assistant';
   text: string;
+  streaming?: boolean;
+  images?: string[];
+  files?: string[];
   traces?: Awaited<ReturnType<typeof rpc.conversations.history>>[number]['traces'];
 }) {
   const person = role === 'user';
 
   return (
-    <Message className="mx-auto w-full max-w-3xl px-5 pb-5" align={person ? 'end' : 'start'}>
+    <Message className="mx-auto w-full max-w-3xl px-6 pb-6" align={person ? 'end' : 'start'}>
       <MessageContent>
         {traces.length > 0 && (
           <Trace>
-            {traces.map((trace, index) => {
-              const ToolIcon = trace.kind === 'tool' && trace.failed ? CircleX : Terminal;
-
-              return (
-                <TraceCollapsible key={index}>
-                  <TraceCollapsibleTrigger>
-                    <TraceLine>
-                      <TraceIcon>
-                        {trace.kind === 'thinking' ? <CircleCheck /> : <ToolIcon />}
-                      </TraceIcon>
-                      <TraceTitle>{trace.kind === 'thinking' ? '思考' : trace.name}</TraceTitle>
-                    </TraceLine>
-                  </TraceCollapsibleTrigger>
-                  <TraceCollapsibleContent className="whitespace-pre-wrap">
-                    {trace.kind === 'thinking' ? trace.text : trace.input}
-                  </TraceCollapsibleContent>
-                </TraceCollapsible>
-              );
-            })}
+            {traces.map((trace, index) => (
+              <TraceCollapsible key={index}>
+                <TraceCollapsibleTrigger>
+                  <TraceLine>
+                    <TraceIcon>
+                      <TraceKindIcon trace={trace} />
+                    </TraceIcon>
+                    <TraceTitle>{trace.kind === 'thinking' ? '思考' : trace.name}</TraceTitle>
+                  </TraceLine>
+                </TraceCollapsibleTrigger>
+                <TraceCollapsibleContent className="whitespace-pre-wrap">
+                  {trace.kind === 'thinking' ? trace.text : trace.input}
+                </TraceCollapsibleContent>
+              </TraceCollapsible>
+            ))}
           </Trace>
         )}
-        {text && (
-          <Bubble align={person ? 'end' : 'start'} variant={person ? 'muted' : 'ghost'}>
-            <BubbleContent className="whitespace-pre-wrap">{text}</BubbleContent>
-          </Bubble>
-        )}
+        {person && <UserText text={text} images={images} files={files} />}
+        {text && !person && <ChatMarkdown content={text} streaming={streaming} />}
       </MessageContent>
     </Message>
   );
 }
 
-function ChatHeader({
-  conversation,
-}: {
-  conversation?: Awaited<ReturnType<typeof rpc.conversations.list>>[number];
-}) {
+type ChatTrace = Awaited<ReturnType<typeof rpc.conversations.history>>[number]['traces'][number];
+
+function TraceKindIcon({ trace }: { trace: ChatTrace }) {
+  if (trace.kind === 'thinking') {
+    return <CircleCheck />;
+  }
+
+  if (trace.failed) {
+    return <CircleX />;
+  }
+
+  return <Terminal />;
+}
+
+type HistoryMessage = Awaited<ReturnType<typeof rpc.conversations.history>>[number];
+
+function HistoryItem({ message }: { message: HistoryMessage }) {
+  if (message.role === 'reminder') {
+    return message.trigger ? <ReminderItem trigger={message.trigger} /> : null;
+  }
+
+  return <ChatTurn {...message} role={message.role} />;
+}
+
+function LiveReminderItem({ reminder }: { reminder: LiveReminder }) {
   return (
-    <div className="border-border flex shrink-0 items-center justify-between gap-3 border-b px-5 py-3">
-      <div className="flex min-w-0 items-center gap-2.5">
-        {conversation && <PlatformIcon platform={conversation.platform} size={16} />}
-        <div className="flex min-w-0 flex-col gap-0.5">
-          <h1 className="truncate text-sm font-medium" title={conversation?.title}>
-            {conversation?.title ?? '新会话'}
-          </h1>
-        </div>
-      </div>
-    </div>
+    <>
+      <ReminderItem trigger={reminder.trigger} live={reminder.turns.length === 0} />
+      {reminder.turns.map((turn, index) => (
+        <ChatTurn
+          key={index}
+          role="assistant"
+          {...turn}
+          streaming={index === reminder.turns.length - 1}
+        />
+      ))}
+    </>
+  );
+}
+
+function PendingTurn({ message }: { message?: ComposerMessage }) {
+  const attachments = message?.attachments ?? [];
+
+  return (
+    <ChatTurn
+      role="user"
+      text={message?.text ?? ''}
+      images={attachments.flatMap(file =>
+        file.mimeType.startsWith('image/') ? [`data:${file.mimeType};base64,${file.data}`] : [],
+      )}
+      files={attachments.flatMap(file => (file.mimeType.startsWith('image/') ? [] : [file.name]))}
+    />
   );
 }
 
@@ -407,11 +737,13 @@ function ChatTranscript({
   error,
   pending,
   replies,
+  reminder,
 }: {
   messages?: Awaited<ReturnType<typeof rpc.conversations.history>>;
   error?: string;
-  pending?: string;
+  pending?: ComposerMessage;
   replies: LiveReplies;
+  reminder?: LiveReminder;
 }) {
   const isSending = pending !== undefined;
   const hasMessages = Boolean(messages?.length) || isSending;
@@ -421,19 +753,6 @@ function ChatTranscript({
       <MessageScroller>
         <MessageScrollerViewport className="chat-message-viewport" data-has-messages={hasMessages}>
           <MessageScrollerContent aria-busy={isSending} className="chat-message-content gap-0">
-            {messages?.length === 0 && !isSending && (
-              <Empty className="h-full">
-                <EmptyHeader>
-                  <EmptyMedia variant="icon">
-                    <MessageCircle aria-hidden="true" />
-                  </EmptyMedia>
-                  <EmptyTitle role="heading" aria-level={1}>
-                    想聊些什么？
-                  </EmptyTitle>
-                  <EmptyDescription>问 Herald 怎么接话，或者聊点什么</EmptyDescription>
-                </EmptyHeader>
-              </Empty>
-            )}
             {error && (
               <p role="alert" className="error">
                 {error}
@@ -445,14 +764,19 @@ function ChatTranscript({
                 messageId={message.id}
                 scrollAnchor={message.role === 'user'}
               >
-                <ChatTurn {...message} />
+                <HistoryItem message={message} />
               </MessageScrollerItem>
             ))}
+            {reminder && (
+              <MessageScrollerItem messageId="reminder">
+                <LiveReminderItem reminder={reminder} />
+              </MessageScrollerItem>
+            )}
             {isSending && (
               <MessageScrollerItem messageId="pending" scrollAnchor>
-                <ChatTurn role="user" text={pending ?? ''} />
+                <PendingTurn message={pending} />
                 {replies.length === 0 && (
-                  <Trace className="mx-auto max-w-3xl px-5 pb-5">
+                  <Trace className="mx-auto max-w-3xl px-6 pb-6">
                     <TraceLine status="running">
                       <TraceIcon>
                         <LoaderCircle className="animate-spin" />
@@ -466,7 +790,7 @@ function ChatTranscript({
             {isSending &&
               replies.map((reply, index) => (
                 <MessageScrollerItem messageId={`reply-${index}`} key={index}>
-                  <ChatTurn role="assistant" {...reply} />
+                  <ChatTurn role="assistant" {...reply} streaming={index === replies.length - 1} />
                 </MessageScrollerItem>
               ))}
           </MessageScrollerContent>
@@ -477,208 +801,275 @@ function ChatTranscript({
   );
 }
 
-function ChatSession({ id }: { id: string }) {
-  const input = useRef<HTMLTextAreaElement>(null);
-  const chatBody = useRef<HTMLDivElement>(null);
-  const composer = useRef<HTMLDivElement>(null);
-  const [text, setText] = useState('');
-  const [replies, setReplies] = useState<LiveReplies>([]);
-  const savingModel = useIsMutating({ mutationKey: chatModelKey(id) }) > 0;
-  const { data: conversations } = useQuery(conversationsQuery);
-  const conversation = conversations?.find(item => item.id === id);
-  const queryClient = useQueryClient();
-  const historyQuery = { queryKey: ['history', id], queryFn: () => rpc.conversations.history(id) };
-  const history = useQuery({ ...historyQuery, refetchOnWindowFocus: false });
+function useStartLiveOverlay(conversation?: Conversation) {
+  const [preparing, setPreparing] = useState(false);
 
-  const send = useMutation({
-    async mutationFn(message: string) {
-      setReplies([]);
-      const stream = await rpc.conversations.send({ id, text: message });
+  const visible =
+    conversation?.mode === 'assistant' && conversation.liveStartedAt === null && !preparing;
 
-      for await (const updates of stream) {
-        setReplies(updates);
-      }
-    },
-    onSuccess() {
-      setText('');
-      input.current?.focus();
-    },
-    async onSettled() {
-      await Promise.all([
-        queryClient.invalidateQueries(historyQuery),
-        queryClient.invalidateQueries(conversationsQuery),
-      ]);
-    },
-  });
+  return { visible, dismiss: () => setPreparing(true) };
+}
 
+function useComposerPlacement(
+  body: React.RefObject<HTMLDivElement | null>,
+  composer: React.RefObject<HTMLDivElement | null>,
+  centered: boolean,
+) {
   useLayoutEffect(() => {
-    const viewport = chatBody.current;
+    const viewport = body.current;
     const overlay = composer.current;
 
     if (!viewport || !overlay) {
       return;
     }
 
+    const stage = viewport.closest<HTMLElement>('.stage');
+
     const update = () => {
-      viewport.style.setProperty(
-        '--composer-clearance',
-        `${Math.ceil(overlay.getBoundingClientRect().height) + 12}px`,
-      );
+      const bounds = overlay.getBoundingClientRect();
+      const clearance = `${Math.ceil(bounds.height) + 12}px`;
+
+      viewport.style.setProperty('--composer-clearance', centered ? '0px' : clearance);
+
+      if (centered && stage) {
+        const bottom = Math.ceil(bounds.bottom - stage.getBoundingClientRect().top);
+        stage.style.setProperty('--conversation-float-top', `${bottom + 12}px`);
+      } else {
+        stage?.style.setProperty('--conversation-composer-clearance', clearance);
+      }
     };
 
     const observer = new ResizeObserver(update);
+    observer.observe(viewport);
     observer.observe(overlay);
     update();
 
-    return () => observer.disconnect();
-  }, []);
+    return () => {
+      observer.disconnect();
+      stage?.style.removeProperty('--conversation-float-top');
+      stage?.style.removeProperty('--conversation-composer-clearance');
+    };
+  }, [body, composer, centered]);
+}
 
-  const composerLocked = send.isPending || savingModel;
+function ChatSession({ id }: { id: string }) {
+  const { id: workspaceId } = useWorkspace();
+  const input = useRef<HTMLTextAreaElement>(null);
+  const chatBody = useRef<HTMLDivElement>(null);
+  const composer = useRef<HTMLDivElement>(null);
+  const [replies, setReplies] = useState<LiveReplies>([]);
+  const savingModel = useIsMutating({ mutationKey: chatModelKey(workspaceId, id) }) > 0;
+  const queryClient = useQueryClient();
 
-  function submit() {
-    if (text.trim() && !composerLocked) {
-      send.mutate(text.trim());
-    }
-  }
+  const historyQuery = {
+    queryKey: [...workspaceKey(workspaceId), 'history', id],
+    queryFn: () => rpc.conversations.history({ workspaceId, id }),
+  };
+
+  const history = useQuery({ ...historyQuery, refetchOnWindowFocus: false });
+  const conversation = useConversations().data?.find(item => item.id === id);
+  const startOverlay = useStartLiveOverlay(conversation);
+
+  const reminder = useLiveReminder(id);
+
+  const send = useMutation({
+    async mutationFn(message: ComposerMessage) {
+      setReplies([]);
+      const stream = await rpc.conversations.send({ workspaceId, id, ...message });
+
+      for await (const updates of stream) {
+        setReplies(updates);
+      }
+    },
+    onSuccess() {
+      input.current?.focus();
+    },
+    async onSettled() {
+      await Promise.all([
+        queryClient.invalidateQueries(historyQuery),
+        queryClient.invalidateQueries({ queryKey: usageKey(workspaceId, id) }),
+        queryClient.invalidateQueries({ queryKey: conversationsKey(workspaceId) }),
+      ]);
+    },
+  });
+
+  const centered =
+    !startOverlay.visible && history.data?.length === 0 && !send.isPending && !reminder;
+
+  useComposerPlacement(chatBody, composer, centered);
 
   return (
-    <section className="chat surface-enter">
-      <ChatHeader conversation={conversation} />
+    <section className="chat surface-enter" aria-label="对话">
       <div ref={chatBody} className="chat-body">
         <ChatTranscript
           messages={history.data}
           error={history.error?.message}
           pending={send.isPending ? send.variables : undefined}
           replies={replies}
+          reminder={reminder}
         />
-        <div ref={composer} className="chat-composer">
-          <form
-            className="pointer-events-auto mx-auto w-full max-w-3xl px-5 pb-5"
-            onSubmit={event => {
-              event.preventDefault();
-              submit();
-            }}
-          >
-            {send.isError && (
-              <p role="alert" className="error">
-                {send.error.message}
-              </p>
-            )}
-            <InputGroup className="bg-popover shadow-lg">
-              <InputGroupTextarea
-                className="min-h-14"
-                ref={input}
-                aria-label="消息"
-                placeholder="给 Herald 发消息…"
-                value={text}
-                readOnly={send.isPending}
-                onChange={event => setText(event.target.value)}
-                onKeyDown={event => {
-                  if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
-                    event.preventDefault();
-                    submit();
-                  }
-                }}
-              />
-              <InputGroupAddon align="block-end" className="flex-wrap pt-1">
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <InputGroupButton
-                      type="button"
-                      size="icon-sm"
-                      variant="outline"
-                      aria-label="添加技能"
-                      disabled={send.isPending}
-                    >
-                      <Plus />
-                    </InputGroupButton>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent className="workspace-dropdown" align="start">
-                    <DropdownMenuGroup>
-                      <DropdownMenuItem
-                        onSelect={() => setText(draft => `/skill:find-live-topic ${draft}`)}
-                      >
-                        找直播话题
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        onSelect={() => setText(draft => `/skill:find-trending-videos ${draft}`)}
-                      >
-                        找热门视频
-                      </DropdownMenuItem>
-                    </DropdownMenuGroup>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-                <ChatModelControls id={id} disabled={send.isPending} />
-                <InputGroupButton
-                  type="submit"
-                  variant="default"
-                  size="icon-sm"
-                  className="ml-auto"
-                  aria-label="发送"
-                  disabled={!text.trim() || composerLocked}
-                >
-                  <ArrowUp />
-                </InputGroupButton>
-              </InputGroupAddon>
-            </InputGroup>
-          </form>
+        {startOverlay.visible && <StartLiveOverlay onDismiss={startOverlay.dismiss} />}
+        <div
+          ref={composer}
+          className="chat-composer"
+          data-centered={centered}
+          inert={startOverlay.visible}
+        >
+          {centered && <h2 className="chat-welcome">今天想聊点什么？</h2>}
+          <ChatComposer
+            id={id}
+            conversation={conversation}
+            input={input}
+            busy={send.isPending}
+            locked={send.isPending || savingModel}
+            centered={centered}
+            sendError={send.error}
+            onDismissError={send.reset}
+            onSend={message => send.mutateAsync(message)}
+          />
         </div>
       </div>
     </section>
   );
 }
 
-function SettingsPage() {
-  const selectPlatform = useContext(platformContext);
+function SettingsRoutePage() {
+  const { openLogin } = useContext(shellContext);
+  const { section } = settingsRoute.useSearch();
+
+  return <SettingsPage section={section} openLogin={openLogin} />;
+}
+
+function WorkspaceRoot() {
+  const query = useQuery(workspaceListQuery);
+  const [selected, setSelected] = useState(() => localStorage.getItem(activeWorkspaceKey));
+  const navigate = useNavigate();
+  const pathname = useLocation({ select: location => location.pathname });
+  const active = query.data?.find(item => item.id === selected) ?? query.data?.[0];
+
+  useEffect(() => {
+    if (active) {
+      localStorage.setItem(activeWorkspaceKey, active.id);
+    }
+  }, [active]);
+
+  if (!active || !query.data) {
+    return (
+      <main className="grid h-full place-items-center gap-3">
+        <div className="grid justify-items-center gap-3">
+          <p role={query.error ? 'alert' : 'status'} className="text-muted-foreground text-sm">
+            {query.error?.message ?? '正在读取工作区…'}
+          </p>
+          {query.isError && (
+            <Button
+              variant="outline"
+              onClick={() => {
+                void query.refetch();
+              }}
+            >
+              重试
+            </Button>
+          )}
+        </div>
+      </main>
+    );
+  }
+
+  function select(id: string) {
+    localStorage.setItem(activeWorkspaceKey, id);
+    setSelected(id);
+
+    if (pathname.startsWith('/chat/')) {
+      void navigate({ to: '/chat', search: {}, replace: true });
+    } else if (pathname === '/memory') {
+      void navigate({ to: '/memory', search: {}, replace: true });
+    }
+  }
+
+  const switcher = (
+    <WorkspaceSwitcher workspace={active} workspaces={query.data} onSelect={select} />
+  );
 
   return (
-    <main className="page settings-page surface-enter">
-      <div className="mx-auto max-w-5xl">
-        <h1>设置</h1>
-        <div className="grid items-start gap-5 lg:grid-cols-2">
-          <PlatformSettings openLogin={selectPlatform} />
-          <ModelSettings />
-        </div>
-      </div>
-    </main>
+    <WorkspaceContext value={active}>
+      <ReminderProvider key={active.id}>
+        <WorkspaceShell switcher={switcher} />
+      </ReminderProvider>
+    </WorkspaceContext>
   );
 }
 
-const rootRoute = createRootRoute({ component: Workspace });
+const rootRoute = createRootRoute({ component: WorkspaceRoot });
 
-const homeLayoutRoute = createRoute({
+const homeRoute = createRoute({
   getParentRoute: () => rootRoute,
-  id: 'home',
-  component: HomeLayout,
+  path: '/',
+  component: () => <Navigate to="/live" replace />,
+});
+
+const liveRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/live',
+  component: LivePage,
+});
+
+const chatLayoutRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/chat',
+  component: ChatLayout,
+  validateSearch: sessionSearch,
 });
 
 const sessionsRoute = createRoute({
-  getParentRoute: () => homeLayoutRoute,
+  getParentRoute: () => chatLayoutRoute,
   path: '/',
-  component: Home,
+  component: ChatHome,
 });
 
 const chatRoute = createRoute({
-  getParentRoute: () => homeLayoutRoute,
-  path: '/chat/$id',
+  getParentRoute: () => chatLayoutRoute,
+  path: '$id',
   component: Chat,
+});
+
+const browserRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/browser',
+  component: () => null,
 });
 
 const settingsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/settings',
-  component: SettingsPage,
+  validateSearch: settingsSearch,
+  component: SettingsRoutePage,
 });
+
+function MemoryRoutePage() {
+  const { scope, id } = memoryRoute.useSearch();
+  const navigate = memoryRoute.useNavigate();
+
+  return (
+    <MemoryPage
+      selected={scope && id ? { scope, id } : undefined}
+      onSelect={selection => void navigate({ search: selection ?? {} })}
+    />
+  );
+}
 
 const memoryRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/memory',
-  component: MemoryPage,
+  validateSearch: memorySearch,
+  component: MemoryRoutePage,
 });
 
 const router = createRouter({
   routeTree: rootRoute.addChildren([
-    homeLayoutRoute.addChildren([sessionsRoute, chatRoute]),
+    homeRoute,
+    liveRoute,
+    chatLayoutRoute.addChildren([sessionsRoute, chatRoute]),
+    browserRoute,
     settingsRoute,
     memoryRoute,
   ]),
@@ -696,6 +1087,11 @@ const root = document.getElementById('root');
 if (!root) {
   throw new Error('Missing application root');
 }
+
+const darkScheme = window.matchMedia('(prefers-color-scheme: dark)');
+const applyTheme = () => document.documentElement.classList.toggle('dark', darkScheme.matches);
+applyTheme();
+darkScheme.addEventListener('change', applyTheme);
 
 createRoot(root).render(
   <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>

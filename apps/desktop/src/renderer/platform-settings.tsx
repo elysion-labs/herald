@@ -7,10 +7,11 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 
-import { platformLabels } from '../shared/platforms.ts';
+import { platformLabels, platforms } from '../shared/platforms.ts';
 import { PlatformIcon } from './platform-icon.tsx';
 import { RoomBinding } from './room-binding.tsx';
 import { rpc } from './rpc.ts';
+import { useWorkspace } from './workspace-context.ts';
 
 export const platformAccountKey = ['platform-account'];
 type OpenLogin = (platform: LivePlatform, trigger: HTMLButtonElement) => void;
@@ -19,19 +20,35 @@ export function PlatformSettings({ openLogin }: { openLogin: OpenLogin }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>直播平台</CardTitle>
-        <CardDescription>登录状态会同步到主页浏览器和弹幕连接。</CardDescription>
+        <CardTitle>平台账号</CardTitle>
+        <CardDescription>登录状态在所有工作区的浏览器与弹幕连接间共享。</CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4">
         <div className="grid gap-2">
           <PlatformAccount platform="bilibili" openLogin={openLogin} />
-          <RoomBinding platform="bilibili" />
         </div>
         <Separator />
         <div className="grid gap-2">
           <PlatformAccount platform="douyin" openLogin={openLogin} />
-          <RoomBinding platform="douyin" />
         </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+export function WorkspaceRoomSettings() {
+  const { name } = useWorkspace();
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>直播间绑定</CardTitle>
+        <CardDescription>当前工作区 · {name}</CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-3">
+        {platforms.map(platform => (
+          <RoomBinding key={platform} platform={platform} />
+        ))}
       </CardContent>
     </Card>
   );

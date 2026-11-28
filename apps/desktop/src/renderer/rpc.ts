@@ -9,6 +9,6 @@ const { port1, port2 } = new MessageChannel();
 window.postMessage(rpcPortMessage, '*', [port2]);
 port1.start();
 
-export const rpc: RouterClient<ReturnType<typeof createRouter>> = createORPCClient(
+export const rpc: RouterClient<ReturnType<typeof createRouter>['router']> = createORPCClient(
   new RPCLink({ port: port1 }),
 );

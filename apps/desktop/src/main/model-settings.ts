@@ -1,12 +1,11 @@
 import { join } from 'node:path';
-import type { DatabaseSync } from 'node:sqlite';
 
 import { getSupportedThinkingLevels, ModelRuntime } from '@herald/agent';
 import { ORPCError } from '@orpc/server';
+import { asc, eq } from 'drizzle-orm';
 import { safeStorage } from 'electron';
 import { z } from 'zod';
 
-import { chatModelChoice, customProvider, modelSelection } from '../shared/model-settings.ts';
 import type {
   ChatModelChoice,
   CustomProvider,
@@ -14,8 +13,8 @@ import type {
   modelDiscovery,
   presetKeyInput,
 } from '../shared/model-settings.ts';
-
-const legacyCustomId = 'herald-custom';
+import { schema } from './db/index.ts';
+import type { Database } from './db/index.ts';
 
 const listingItem = z.object({
   id: z.string().optional(),
@@ -34,56 +33,32 @@ function normalizedUrl(baseUrl: string) {
 }
 
 function customKey({ id, baseUrl }: Pick<CustomProvider, 'id' | 'baseUrl'>) {
-  if (id === legacyCustomId) {
-    return `custom:${new URL(baseUrl).href}`;
-  }
-
   return `custom:${id}:${normalizedUrl(baseUrl)}`;
 }
 
-export function openModelSettings(database: DatabaseSync, directory: string) {
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS model_selection (id INTEGER PRIMARY KEY CHECK (id = 1), value TEXT NOT NULL);
-    CREATE TABLE IF NOT EXISTS model_keys (id TEXT PRIMARY KEY, value BLOB NOT NULL);
-    CREATE TABLE IF NOT EXISTS custom_model_providers (id TEXT PRIMARY KEY, value TEXT NOT NULL);
-    CREATE TABLE IF NOT EXISTS conversation_models (
-      id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
-      value TEXT NOT NULL
-    );
-  `);
+export function openModelSettings(db: Database, directory: string) {
+  const { modelKeys, customModelProviders, conversationModels } = schema;
 
-  const readLegacy = database.prepare('SELECT value FROM model_selection WHERE id = 1');
-  const readKey = database.prepare('SELECT value FROM model_keys WHERE id = ?');
-  const writeKey = database.prepare('INSERT OR REPLACE INTO model_keys VALUES (?, ?)');
-  const deleteKey = database.prepare('DELETE FROM model_keys WHERE id = ?');
-  const readProviders = database.prepare('SELECT value FROM custom_model_providers ORDER BY id');
-  const readProvider = database.prepare('SELECT value FROM custom_model_providers WHERE id = ?');
+  const readKey = (id: string) => db.select().from(modelKeys).where(eq(modelKeys.id, id)).get();
 
-  const writeProvider = database.prepare(
-    'INSERT OR REPLACE INTO custom_model_providers VALUES (?, ?)',
-  );
+  const writeKey = (id: string, value: Buffer) =>
+    db
+      .insert(modelKeys)
+      .values({ id, value })
+      .onConflictDoUpdate({ target: modelKeys.id, set: { value } })
+      .run();
 
-  const readChoice = database.prepare('SELECT value FROM conversation_models WHERE id = ?');
-  const writeChoice = database.prepare('INSERT OR REPLACE INTO conversation_models VALUES (?, ?)');
-  const legacyRow = readLegacy.get();
+  const deleteKey = (id: string) => db.delete(modelKeys).where(eq(modelKeys.id, id)).run();
 
-  const legacy = legacyRow
-    ? modelSelection.safeParse(JSON.parse(legacyRow.value as string)).data
-    : undefined;
+  const readProvider = (id: string) =>
+    db.select().from(customModelProviders).where(eq(customModelProviders.id, id)).get();
 
-  if (legacy?.kind === 'custom' && !readProvider.get(legacyCustomId)) {
-    const { api, baseUrl, model, contextWindow, maxTokens, reasoning, images } = legacy;
-
-    const config: CustomProvider = {
-      id: legacyCustomId,
-      name: 'Herald 自定义',
-      api,
-      baseUrl,
-      models: [{ id: model, name: model, contextWindow, maxTokens, reasoning, images }],
-    };
-
-    writeProvider.run(config.id, JSON.stringify(config));
-  }
+  const writeProvider = (config: CustomProvider) =>
+    db
+      .insert(customModelProviders)
+      .values({ id: config.id, config })
+      .onConflictDoUpdate({ target: customModelProviders.id, set: { config } })
+      .run();
 
   const createRuntime = () =>
     ModelRuntime.create({
@@ -92,7 +67,12 @@ export function openModelSettings(database: DatabaseSync, directory: string) {
     });
 
   function configuredProviders() {
-    return readProviders.all().map(row => customProvider.parse(JSON.parse(row.value as string)));
+    return db
+      .select()
+      .from(customModelProviders)
+      .orderBy(asc(customModelProviders.id))
+      .all()
+      .map(row => row.config);
   }
 
   async function loadRuntime() {
@@ -115,24 +95,12 @@ export function openModelSettings(database: DatabaseSync, directory: string) {
   }
 
   function defaultChoice(runtime: ModelRuntime, custom: CustomProvider[]) {
-    if (legacy) {
-      const provider = legacy.kind === 'preset' ? legacy.provider : legacyCustomId;
-
-      if (
-        runtime.getModel(provider, legacy.model) &&
-        (Boolean(readKey.get(resolvedKeyId(provider, custom))) ||
-          runtime.hasConfiguredAuth(provider))
-      ) {
-        return { provider, model: legacy.model };
-      }
-    }
-
     const ready = runtime
       .getProviders()
       .find(
         provider =>
           runtime.getModels(provider.id).length &&
-          (Boolean(readKey.get(resolvedKeyId(provider.id, custom))) ||
+          (Boolean(readKey(resolvedKeyId(provider.id, custom))) ||
             runtime.hasConfiguredAuth(provider.id)),
       );
 
@@ -142,28 +110,30 @@ export function openModelSettings(database: DatabaseSync, directory: string) {
   }
 
   function choice(id: string) {
-    const row = readChoice.get(id);
-
-    return row ? chatModelChoice.parse(JSON.parse(row.value as string)) : undefined;
+    return db
+      .select()
+      .from(conversationModels)
+      .where(eq(conversationModels.conversationId, id))
+      .get()?.choice;
   }
 
   async function decrypt(id: string) {
-    const key = readKey.get(id);
+    const key = readKey(id);
 
     if (!key) {
       return undefined;
     }
 
-    const { result } = await safeStorage.decryptStringAsync(Buffer.from(key.value as Uint8Array));
+    const { result } = await safeStorage.decryptStringAsync(key.value);
 
     return result;
   }
 
   function storeKey(id: string, encrypted: Buffer | undefined, clearKey?: boolean) {
     if (encrypted) {
-      writeKey.run(id, encrypted);
+      writeKey(id, encrypted);
     } else if (clearKey) {
-      deleteKey.run(id);
+      deleteKey(id);
     }
   }
 
@@ -187,7 +157,7 @@ export function openModelSettings(database: DatabaseSync, directory: string) {
             id: provider.id,
             name: provider.name,
             models,
-            hasSavedKey: Boolean(readKey.get(resolvedKeyId(provider.id, custom))),
+            hasSavedKey: Boolean(readKey(resolvedKeyId(provider.id, custom))),
             hasPiAuth: runtime.hasConfiguredAuth(provider.id),
             isCustom: custom.some(item => item.id === provider.id),
           },
@@ -199,7 +169,7 @@ export function openModelSettings(database: DatabaseSync, directory: string) {
         providers,
         custom: custom.map(provider => ({
           ...provider,
-          hasSavedKey: Boolean(readKey.get(customKey(provider))),
+          hasSavedKey: Boolean(readKey(customKey(provider))),
         })),
       };
     },
@@ -216,7 +186,13 @@ export function openModelSettings(database: DatabaseSync, directory: string) {
         throw new ORPCError('BAD_REQUEST', { message: '所选模型不支持这个思考等级' });
       }
 
-      writeChoice.run(id, JSON.stringify(preference));
+      db.insert(conversationModels)
+        .values({ conversationId: id, choice: preference })
+        .onConflictDoUpdate({
+          target: conversationModels.conversationId,
+          set: { choice: preference },
+        })
+        .run();
 
       return preference;
     },
@@ -242,20 +218,14 @@ export function openModelSettings(database: DatabaseSync, directory: string) {
 
       const encrypted = await encrypt(apiKey);
 
-      if (!editing && readProvider.get(provider.id)) {
+      if (!editing && readProvider(provider.id)) {
         throw new ORPCError('CONFLICT', { message: '该 Provider ID 已存在' });
       }
 
-      database.exec('BEGIN');
-
-      try {
-        writeProvider.run(provider.id, JSON.stringify(provider));
+      db.transaction(() => {
+        writeProvider(provider);
         storeKey(customKey(provider), encrypted, clearKey);
-        database.exec('COMMIT');
-      } catch (error) {
-        database.exec('ROLLBACK');
-        throw error;
-      }
+      });
     },
     async discover(input: z.infer<typeof modelDiscovery>) {
       const key = input.apiKey ?? (input.clearKey ? undefined : await decrypt(customKey(input)));

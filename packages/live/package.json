@@ -5,8 +5,8 @@
   "type": "module",
   "exports": "./src/index.ts",
   "dependencies": {
-    "@elysionjs/blive-ws": "link:../../vendor/blive-ws",
-    "@elysionjs/dylive-ws": "link:../../vendor/dylive-ws",
+    "@elysionjs/blive-ws": "0.2.0",
+    "@elysionjs/dylive-ws": "^0.1.1",
     "cookie": "catalog:",
     "ws": "catalog:"
   },

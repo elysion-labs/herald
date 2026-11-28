@@ -18,7 +18,7 @@ export function createHistoryAgentTools({
     defineTool({
       name: 'session_history_search',
       label: '搜索会话历史',
-      description: '搜索当前直播平台上已保存的对话。搜索结果作为历史资料。',
+      description: '搜索已保存的对话。搜索结果作为历史资料。',
       parameters: Type.Object({ query: Type.String({ minLength: 1, maxLength: 120 }) }),
       async execute(_callId, { query }, signal) {
         const matches = await search(query, signal);

@@ -1,8 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
-import { defineTool, loadSkills } from '@earendil-works/pi-coding-agent';
-import { Type } from 'typebox';
+import { stripFrontmatter } from '@earendil-works/pi-coding-agent';
+import type { Skill } from '@earendil-works/pi-coding-agent';
 
 const bundledSkills = [
   'find-live-topic',
@@ -11,44 +11,38 @@ const bundledSkills = [
   'remember-viewer',
 ] as const;
 
-export function loadLiveSkills(
-  cwd: string,
-  agentDir: string,
-  enabled: readonly string[] = bundledSkills,
-) {
-  const skillPaths = bundledSkills
+/** Herald 自带 skill 的 SKILL.md 路径，交给 pi 的 DefaultResourceLoader 一起发现。 */
+export function bundledSkillPaths(enabled: readonly string[] = bundledSkills) {
+  return bundledSkills
     .filter(name => enabled.includes(name))
     .map(name => fileURLToPath(new URL(`../skills/${name}/SKILL.md`, import.meta.url)));
-
-  return loadSkills({ cwd, agentDir, skillPaths, includeDefaults: false });
 }
 
-export function createSkillAgentTools({
-  skills,
-}: {
-  skills: ReturnType<typeof loadLiveSkills>['skills'];
-}) {
-  const selectableSkills = skills.filter(skill => !skill.disableModelInvocation);
+type LiveSkill = Pick<Skill, 'name' | 'filePath' | 'baseDir'>;
+const skillCommand = /^\/skill:(\S+)(?:\s+|$)/;
 
-  return [
-    defineTool({
-      name: 'load_skill',
-      label: '加载 Skill',
-      description: `按名称加载 Herald 的工作流程。${selectableSkills
-        .map(skill => `${skill.name}: ${skill.description}`)
-        .join(' ')}`,
-      parameters: Type.Object({ name: Type.String({ minLength: 1, maxLength: 64 }) }),
-      async execute(_callId, { name }, signal) {
-        const skill = selectableSkills.find(item => item.name === name);
+/**
+ * 展开消息开头连续的 `/skill:名称` 命令。pi 自身只展开第一个，这里按相同格式逐个展开，
+ * 展开后的文本不再以 `/skill:` 开头，pi 会原样发送。
+ */
+export async function expandSkillCommands(text: string, skills: readonly LiveSkill[]) {
+  const blocks: string[] = [];
+  let rest = text;
 
-        if (!skill) {
-          throw new Error('Skill is unavailable');
-        }
+  for (let match = skillCommand.exec(rest); match; match = skillCommand.exec(rest)) {
+    const skill = skills.find(item => item.name === match?.[1]);
 
-        const markdown = await readFile(skill.filePath, { encoding: 'utf8', signal });
+    if (!skill) {
+      break;
+    }
 
-        return { content: [{ type: 'text', text: markdown }], details: { name } };
-      },
-    }),
-  ];
+    const body = stripFrontmatter(await readFile(skill.filePath, 'utf8')).trim();
+
+    blocks.push(
+      `<skill name="${skill.name}" location="${skill.filePath}">\nReferences are relative to ${skill.baseDir}.\n\n${body}\n</skill>`,
+    );
+    rest = rest.slice(match[0].length);
+  }
+
+  return blocks.length ? [...blocks, rest.trim()].filter(Boolean).join('\n\n') : text;
 }

@@ -1,5 +1,5 @@
 import type { LivePlatform } from '@herald/live';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
 import { ArrowUpRight, RotateCw } from 'lucide-react';
 import { useRef, useState } from 'react';
@@ -22,35 +22,20 @@ import { Separator } from '@/components/ui/separator';
 
 import { platformLabels } from '../shared/platforms.ts';
 import { dialogOrigin } from './dialog-origin.ts';
+import { roomsKey, statusLabels, StatusDot, useRooms } from './live-status.tsx';
+import type { Room } from './live-status.tsx';
+import { PlatformIcon } from './platform-icon.tsx';
 import { rpc } from './rpc.ts';
-
-const statusLabels = {
-  idle: '未连接',
-  connecting: '连接中',
-  connected: '弹幕已连接',
-  reconnecting: '重连中',
-  stopped: '已断开',
-  failed: '连接失败',
-  disposed: '已断开',
-} as const;
-
-type Room = Awaited<ReturnType<typeof rpc.rooms.status>>;
-
-function roomQuery(platform: LivePlatform) {
-  return {
-    queryKey: ['live-room', platform],
-    queryFn: () => rpc.rooms.status(platform),
-    refetchInterval: 1500,
-  };
-}
+import { conversationsKey, useWorkspace } from './workspace-context.ts';
 
 export function RoomBinding({ platform }: { platform: LivePlatform }) {
   const client = useQueryClient();
   const trigger = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
   const [origin, setOrigin] = useState<CSSProperties>();
-  const query = roomQuery(platform);
-  const { data, isPending } = useQuery(query);
+  const { id: workspaceId } = useWorkspace();
+  const { data: rooms, error, isPending } = useRooms();
+  const data = rooms?.find(room => room.platform === platform);
   const name = platformLabels[platform];
 
   return (
@@ -65,9 +50,13 @@ export function RoomBinding({ platform }: { platform: LivePlatform }) {
       }}
     >
       <div className="flex flex-wrap items-center gap-2">
-        <p className="text-muted-foreground mr-auto text-sm">
-          {data ? `直播间 ${data.roomId}` : '未绑定直播间'}
-        </p>
+        <PlatformIcon platform={platform} size={18} />
+        <div className="mr-auto min-w-0">
+          <p className="text-sm font-medium">{name}</p>
+          <p className="text-muted-foreground truncate text-xs">
+            {data ? `直播间 ${data.roomId}` : (error?.message ?? '未绑定直播间')}
+          </p>
+        </div>
         {data && <RoomStatus room={data} />}
         <DialogTrigger asChild>
           <Button
@@ -84,15 +73,16 @@ export function RoomBinding({ platform }: { platform: LivePlatform }) {
       <DialogContent className="login-dialog" style={origin}>
         <DialogHeader>
           <DialogTitle>{name}直播间</DialogTitle>
-          <DialogDescription>此平台的所有会话都会使用这个直播间。</DialogDescription>
+          <DialogDescription>绑定仅对当前工作区生效。直播结束后可以更换或解绑。</DialogDescription>
         </DialogHeader>
         <RoomForm
           key={data?.roomId ?? 'unbound'}
           platform={platform}
           room={data}
-          onSaved={next => {
-            client.setQueryData(query.queryKey, next);
+          onSaved={() => {
             setOpen(false);
+            void client.invalidateQueries({ queryKey: roomsKey(workspaceId) });
+            void client.invalidateQueries({ queryKey: conversationsKey(workspaceId) });
           }}
         />
       </DialogContent>
@@ -103,6 +93,7 @@ export function RoomBinding({ platform }: { platform: LivePlatform }) {
 function RoomStatus({ room }: { room: NonNullable<Room> }) {
   return (
     <Badge variant={room.state === 'failed' ? 'outline' : 'secondary'}>
+      <StatusDot room={room} />
       {statusLabels[room.state]}
     </Badge>
   );
@@ -115,20 +106,24 @@ function RoomForm({
 }: {
   platform: LivePlatform;
   room?: Room;
-  onSaved: (room: Room) => void;
+  onSaved: () => void;
 }) {
   const client = useQueryClient();
   const navigate = useNavigate();
+  const { id: workspaceId } = useWorkspace();
   const [value, setValue] = useState(room?.roomId ?? '');
 
   const save = useMutation({
-    mutationFn: (room: string | null) => rpc.rooms.setBinding({ platform, room }),
+    mutationFn: (room: string | null) =>
+      room === null
+        ? rpc.workspaces.unbindRoom({ workspaceId, platform })
+        : rpc.workspaces.bindRoom({ workspaceId, platform, room }),
     onSuccess: onSaved,
   });
 
   const connect = useMutation({
-    mutationFn: () => rpc.rooms.reconnect(platform),
-    onSuccess: next => client.setQueryData(roomQuery(platform).queryKey, next),
+    mutationFn: () => rpc.rooms.reconnect({ workspaceId, platform }),
+    onSuccess: () => client.invalidateQueries({ queryKey: roomsKey(workspaceId) }),
   });
 
   const website = useMutation({

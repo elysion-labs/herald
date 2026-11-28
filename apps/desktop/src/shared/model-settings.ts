@@ -22,17 +22,6 @@ const modelLimits = {
   images: z.boolean(),
 };
 
-export const modelSelection = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('preset'), provider: modelId, model: modelId }),
-  z.object({
-    kind: z.literal('custom'),
-    api: z.enum(modelApis),
-    baseUrl,
-    model: modelId,
-    ...modelLimits,
-  }),
-]);
-
 const credential = {
   apiKey: z.string().trim().min(1).max(4096).optional(),
   clearKey: z.boolean().optional(),

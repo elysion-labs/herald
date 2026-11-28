@@ -6,6 +6,7 @@
   "main": "./out/main/index.js",
   "scripts": {
     "build": "vld build",
+    "db:generate": "drizzle-kit generate",
     "dev": "vld dev",
     "prepare": "install-electron",
     "preview": "vld preview"
@@ -13,7 +14,9 @@
   "dependencies": {
     "@herald/agent": "workspace:*",
     "@herald/browser-tool": "workspace:*",
+    "@herald/danmaku": "workspace:*",
     "@herald/live": "workspace:*",
+    "@herald/live-assistant": "workspace:*",
     "@herald/memory-tool": "workspace:*",
     "@orpc/client": "1.16.5",
     "@orpc/server": "1.16.5",
@@ -21,9 +24,12 @@
     "@tanstack/react-query": "^5",
     "@tanstack/react-router": "^1",
     "class-variance-authority": "catalog:",
+    "cmdk": "catalog:",
     "cn": "catalog:",
+    "drizzle-orm": "catalog:",
     "kubai-icons-react": "0.15.0",
     "lucide-react": "^0.577.0",
+    "markstream-react": "catalog:",
     "radix-ui": "^1",
     "react": "^19",
     "react-dom": "^19",
@@ -39,6 +45,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^6",
+    "drizzle-kit": "catalog:",
     "electron": "45.4.1",
     "shadcn": "4.23.0",
     "tailwindcss": "^4",

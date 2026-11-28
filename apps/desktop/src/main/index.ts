@@ -1,34 +1,41 @@
 import { join } from 'node:path';
 
 import { RPCHandler } from '@orpc/server/message-port';
-import { app, BrowserWindow, ipcMain, Menu } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, nativeTheme } from 'electron';
 
 import { rpcPortMessage } from '../shared/platforms.ts';
 import { createWorkspaceBrowser } from './browser.ts';
 import { attachLoginPortals, migrateWebLogin } from './login.ts';
 import { createRouter } from './router.ts';
-import { openWorkspace } from './workspace.ts';
+import { openWorkspaces } from './workspaces.ts';
+
+function windowColors() {
+  return nativeTheme.shouldUseDarkColors
+    ? { color: '#0a0a0b', symbolColor: '#f4f4f5' }
+    : { color: '#f4f4f5', symbolColor: '#18181b' };
+}
 
 async function start() {
   await app.whenReady();
   Menu.setApplicationMenu(null);
 
   const directory = app.getPath('userData');
-  const workspace = openWorkspace(directory);
   await migrateWebLogin(directory).catch(() => console.warn('无法迁移旧版网页登录状态'));
-  workspace.rooms.start();
-  app.once('before-quit', () => workspace.rooms.stop());
+  const workspaces = openWorkspaces(directory);
+  app.once('before-quit', () => workspaces.dispose());
 
   function createWindow() {
+    const colors = windowColors();
+
     const window = new BrowserWindow({
       title: 'Herald',
       width: 1440,
       height: 920,
       minWidth: 900,
       minHeight: 580,
-      backgroundColor: '#0a0a0a',
+      backgroundColor: colors.color,
       titleBarStyle: 'hidden',
-      titleBarOverlay: { color: '#0a0a0a', symbolColor: '#fafafa', height: 35 },
+      titleBarOverlay: { ...colors, height: 40 },
       autoHideMenuBar: true,
       webPreferences: {
         preload: join(import.meta.dirname, '../preload/index.cjs'),
@@ -39,9 +46,18 @@ async function start() {
     });
 
     const contents = window.webContents;
+
+    const updateColors = () => {
+      const next = windowColors();
+      window.setBackgroundColor(next.color);
+      window.setTitleBarOverlay({ ...next, height: 40 });
+    };
+
+    nativeTheme.on('updated', updateColors);
     attachLoginPortals(contents);
     const browser = createWorkspaceBrowser(window);
-    const handler = new RPCHandler(createRouter(workspace, browser));
+    const { router, dispose } = createRouter(workspaces, browser);
+    const handler = new RPCHandler(router);
     const ports = new Set<Electron.MessagePortMain>();
 
     const bindPort = (event: Electron.IpcMainEvent) => {
@@ -62,6 +78,8 @@ async function start() {
 
     ipcMain.on(rpcPortMessage, bindPort);
     window.on('closed', () => {
+      nativeTheme.off('updated', updateColors);
+      dispose();
       ipcMain.off(rpcPortMessage, bindPort);
 
       for (const port of ports) {

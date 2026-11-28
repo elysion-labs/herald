@@ -1,9 +1,17 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown, Settings2 } from 'lucide-react';
 import { useState } from 'react';
 
 import { Button } from '@/components/ui/button';
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -11,13 +19,13 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Input } from '@/components/ui/input';
 import { InputGroupButton } from '@/components/ui/input-group';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 
 import type { ChatModelChoice } from '../shared/model-settings.ts';
 import { modelCatalogQuery } from './model-settings.tsx';
 import { rpc } from './rpc.ts';
+import { useWorkspace, workspaceKey } from './workspace-context.ts';
 
 const levels = {
   off: '关闭',
@@ -29,22 +37,36 @@ const levels = {
   max: '最高',
 };
 
-export function chatModelKey(id: string) {
-  return ['chat-model-choice', id];
+export function chatModelKey(workspaceId: string, id: string) {
+  return [...workspaceKey(workspaceId), 'chat-model-choice', id];
 }
 
-export function ChatModelControls({ id, disabled }: { id: string; disabled: boolean }) {
+export function ChatModelControls({
+  id,
+  disabled,
+  side,
+}: {
+  id: string;
+  disabled: boolean;
+  side: 'top' | 'bottom';
+}) {
   const client = useQueryClient();
   const catalog = useQuery(modelCatalogQuery);
-  const queryKey = chatModelKey(id);
-  const choice = useQuery({ queryKey, queryFn: async () => (await rpc.models.choice(id)) ?? null });
+  const { id: workspaceId } = useWorkspace();
+  const queryKey = chatModelKey(workspaceId, id);
+
+  const choice = useQuery({
+    queryKey,
+    queryFn: async () => (await rpc.models.choice({ workspaceId, id })) ?? null,
+  });
+
   const [open, setOpen] = useState(false);
   const current = choice.data ?? catalog.data?.defaultChoice;
   const { providers, label, thinking } = modelPickerState(catalog.data?.providers, current);
 
   const save = useMutation({
     mutationKey: queryKey,
-    mutationFn: (next: ChatModelChoice) => rpc.models.select({ id, choice: next }),
+    mutationFn: (next: ChatModelChoice) => rpc.models.select({ workspaceId, id, choice: next }),
     onSuccess(next) {
       client.setQueryData(queryKey, next);
       setOpen(false);
@@ -60,7 +82,8 @@ export function ChatModelControls({ id, disabled }: { id: string; disabled: bool
           <InputGroupButton
             type="button"
             variant="ghost"
-            size="sm"
+            size="xs"
+            className="composer-action"
             disabled={locked}
             aria-label="选择模型"
           >
@@ -68,12 +91,18 @@ export function ChatModelControls({ id, disabled }: { id: string; disabled: bool
             <ChevronDown data-icon="inline-end" />
           </InputGroupButton>
         </PopoverTrigger>
-        <PopoverContent side="top" align="start" className="w-64">
+        <PopoverContent
+          side={side}
+          align="start"
+          aria-label="选择模型"
+          className="w-64 overflow-hidden p-0"
+        >
           <ModelPicker
             providers={providers}
             current={current}
             disabled={save.isPending}
             onSelect={next => save.mutate(next)}
+            onManage={() => setOpen(false)}
           />
         </PopoverContent>
       </Popover>
@@ -82,6 +111,7 @@ export function ChatModelControls({ id, disabled }: { id: string; disabled: bool
         model={current}
         available={thinking}
         disabled={locked}
+        side={side}
         onSelect={next => save.mutate(next)}
       />
       {save.isError && (
@@ -110,87 +140,74 @@ function modelPickerState(catalog: ProviderList | undefined, choice: ChatModelCh
   };
 }
 
+/** shadcn Model Selector：按供应商分组、可搜索，右上角齿轮进入模型设置。 */
 function ModelPicker({
   providers,
   current,
   disabled,
   onSelect,
+  onManage,
 }: {
   providers: ProviderList;
   current?: ChatModelChoice;
   disabled: boolean;
   onSelect: (choice: ChatModelChoice) => void;
+  onManage: () => void;
 }) {
-  const [providerId, setProviderId] = useState(current?.provider);
-  const [filter, setFilter] = useState('');
-  const provider = providers.find(item => item.id === providerId);
-  const term = filter.trim().toLocaleLowerCase();
-
-  const models = provider?.models.filter(model =>
-    [model.name, model.id].some(value => value.toLocaleLowerCase().includes(term)),
-  );
-
   return (
-    <div className="grid gap-2">
-      {provider ? (
-        <>
-          <div className="flex items-center justify-between gap-2">
-            <span className="truncate text-sm font-medium">{provider.name || provider.id}</span>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              aria-label="切换供应商"
-              onClick={() => {
-                setProviderId(undefined);
-                setFilter('');
-              }}
-            >
-              供应商
-            </Button>
-          </div>
-          <Input
-            aria-label="筛选模型"
-            placeholder="筛选模型"
-            value={filter}
-            onChange={event => setFilter(event.target.value)}
-          />
-          <div className="grid max-h-64 gap-0.5 overflow-y-auto">
-            {models?.map(model => (
-              <Button
-                key={model.id}
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="justify-start"
-                disabled={disabled}
-                onClick={() => onSelect({ provider: provider.id, model: model.id })}
-              >
-                <span className="truncate">{model.name}</span>
-              </Button>
-            ))}
-          </div>
-        </>
-      ) : (
-        <div className="grid max-h-64 gap-0.5 overflow-y-auto">
-          {providers.map(item => (
-            <Button
-              key={item.id}
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="justify-start"
-              onClick={() => setProviderId(item.id)}
-            >
-              <span className="truncate">{item.name || item.id}</span>
-            </Button>
-          ))}
+    <Command>
+      <div className="border-border flex items-center border-b pr-1">
+        <CommandInput placeholder="搜索模型" aria-label="搜索模型" />
+        <Button
+          asChild
+          variant="ghost"
+          size="icon-sm"
+          className="text-muted-foreground hover:text-foreground shrink-0 rounded-md"
+        >
+          <Link
+            to="/settings"
+            search={{ section: 'models' }}
+            aria-label="管理模型供应商"
+            title="管理模型供应商"
+            onClick={onManage}
+          >
+            <Settings2 />
+          </Link>
+        </Button>
+      </div>
+      {!providers.length && (
+        <div className="text-muted-foreground grid justify-items-center gap-2 px-3 py-4 text-center text-xs">
+          <p>还没有可用的模型供应商</p>
+          <Link
+            to="/settings"
+            search={{ section: 'models' }}
+            className="text-foreground underline underline-offset-3"
+            onClick={onManage}
+          >
+            去设置配置模型
+          </Link>
         </div>
       )}
-      <Button asChild variant="outline" size="sm">
-        <Link to="/settings">管理模型供应商</Link>
-      </Button>
-    </div>
+      <CommandList className="max-h-80">
+        {providers.length > 0 && <CommandEmpty>没有匹配的模型</CommandEmpty>}
+        {providers.map(provider => (
+          <CommandGroup key={provider.id} heading={provider.name || provider.id}>
+            {provider.models.map(model => (
+              <CommandItem
+                key={model.id}
+                value={`${provider.id}/${model.id}`}
+                keywords={[model.name, model.id, provider.name, provider.id]}
+                disabled={disabled}
+                data-checked={current?.provider === provider.id && current.model === model.id}
+                onSelect={() => onSelect({ provider: provider.id, model: model.id })}
+              >
+                <span className="truncate">{model.name}</span>
+              </CommandItem>
+            ))}
+          </CommandGroup>
+        ))}
+      </CommandList>
+    </Command>
   );
 }
 
@@ -199,12 +216,14 @@ function ThinkingControl({
   model,
   available,
   disabled,
+  side,
   onSelect,
 }: {
   current?: ChatModelChoice | null;
   model?: ChatModelChoice;
   available: NonNullable<ChatModelChoice['thinking']>[];
   disabled: boolean;
+  side: 'top' | 'bottom';
   onSelect: (next: ChatModelChoice) => void;
 }) {
   const reasoning = available.some(level => level !== 'off');
@@ -215,7 +234,8 @@ function ThinkingControl({
         <InputGroupButton
           type="button"
           variant="ghost"
-          size="sm"
+          size="xs"
+          className="composer-action"
           aria-label="思考等级"
           disabled={disabled || !reasoning}
           title={reasoning ? '思考等级' : '当前模型未提供思考等级'}
@@ -224,7 +244,7 @@ function ThinkingControl({
           <ChevronDown data-icon="inline-end" />
         </InputGroupButton>
       </DropdownMenuTrigger>
-      <DropdownMenuContent side="top" align="start">
+      <DropdownMenuContent side={side} align="start">
         <DropdownMenuGroup>
           <DropdownMenuItem
             onSelect={() => {

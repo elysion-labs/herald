@@ -7,8 +7,7 @@
     "build": "vp run desktop#build",
     "dev": "vp run desktop#dev",
     "prepare": "vp config",
-    "ready": "vp check && vp test run --passWithNoTests && vp run desktop#build",
-    "setup": "vpx ./scripts/setup-vendor.ts"
+    "ready": "vp check && vp test run --passWithNoTests && vp run desktop#build"
   },
   "devDependencies": {
     "@byc/vp-config": "catalog:",
