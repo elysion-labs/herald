@@ -32,6 +32,8 @@
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
+  /* shadcn 控件默认用 rounded-2xl（胶囊）。统一收回到与弹层一致的圆角。 */
+  --radius-2xl: var(--radius);
 }
 
 /*
@@ -750,6 +752,22 @@ a:focus-visible {
 }
 .settings-content {
   padding: clamp(16px, 2.4vw, 32px);
+}
+/* 设置内容直接铺在面板上，不再套一层卡片；分组之间只用分隔线。 */
+.settings-content [data-slot='card'] {
+  padding-block: 0;
+  overflow: visible;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+}
+.settings-content [data-slot='card'] > [data-slot^='card-'] {
+  padding-inline: 0;
+}
+.settings-content .settings-stack > * + * {
+  margin-top: 24px;
+  padding-top: 24px;
+  border-top: 1px solid var(--panel-divider);
 }
 .disclosure-trigger {
   display: flex;

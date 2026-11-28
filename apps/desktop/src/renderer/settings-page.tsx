@@ -89,7 +89,7 @@ export function SettingsPage({
         className="route-content page settings-content"
         aria-label={active.label}
       >
-        <div className="settings-stack mx-auto grid max-w-3xl gap-4">
+        <div className="settings-stack mx-auto grid max-w-3xl">
           <Content openLogin={openLogin} />
         </div>
       </main>
